@@ -70,7 +70,7 @@ def create_carousel_menu(user_id):
         bookmark_count = conn.execute("SELECT COUNT(*) FROM bookmarks WHERE line_user_id = ?", (user_id,)).fetchone()[0]
         conn.close()
 
-        if user_progress and user_progress['current_chapter_id'] is not None:
+        if user_progress and user_progress['current_chapter_id'] is not None and user_progress['current_section_id'] is not None:
             chapter_id = user_progress['current_chapter_id']
             section_id = user_progress['current_section_id']
             columns.append(CarouselColumn(
@@ -124,11 +124,6 @@ def handle_message(event):
     if '目錄' in text or '目录' in text:
         line_api = MessagingApi(ApiClient(configuration))
         line_api.link_rich_menu_to_user(user_id, MAIN_RICH_MENU_ID)
-        print(f">>> 已為使用者 {user_id} 切換至主選單")
-        # 可以選擇性地回覆一個確認訊息
-        # reply_token = event.reply_token
-        # line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="已為您開啟主選單。")]))
-
 
 @handler.add(PostbackEvent)
 def handle_postback(event):
@@ -152,7 +147,12 @@ def handle_postback(event):
         conn.close()
         
         chapter_title = next((c['title'] for c in book_data['chapters'] if c['chapter_id'] == chapter_id), "")
-        line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"您已選擇：{chapter_title}")]))
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=f"您已選擇：{chapter_title}\n\n請點擊下方選單開始操作。")]
+            )
+        )
         line_api.link_rich_menu_to_user(user_id, CHAPTER_RICH_MENU_ID)
         print(f">>> 已為使用者 {user_id} 切換至章節選單 (CH {chapter_id})")
 
@@ -160,7 +160,7 @@ def handle_postback(event):
         conn = get_db_connection()
         user = conn.execute("SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", (user_id,)).fetchone()
         conn.close()
-        if not user or not user['current_chapter_id']:
+        if not user or user['current_chapter_id'] is None:
             line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請先從主選單選擇一個章節。")]))
             return
         
@@ -196,20 +196,19 @@ def handle_postback(event):
         else:
             quick_reply_items = []
             for bm in bookmarks:
-                chapter_id = bm['chapter_id']
-                section_id = bm['section_id']
+                chapter_id, section_id = bm['chapter_id'], bm['section_id']
                 label_text = f"CH{chapter_id} - SEC{section_id}"
                 quick_reply_items.append(QuickReplyItem(action=PostbackAction(label=label_text, display_text=f"跳至 {label_text}", data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id}")))
-            line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請點擊下方按鈕，快速跳至您標記的段落：", quick_reply=QuickReply(items=quick_reply_items))]))
+            line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請點擊下方按鈕，快速跳至您標記的段落：", quick_reply=QuickReply(items=quick_reply_items[:13]))]))
 
     elif action == 'view_analytics':
         conn = get_db_connection()
         total_attempts = conn.execute("SELECT COUNT(*) FROM quiz_attempts WHERE line_user_id = ?", (user_id,)).fetchone()[0]
         wrong_attempts = conn.execute("SELECT COUNT(*) FROM quiz_attempts WHERE line_user_id = ? AND is_correct = 0", (user_id,)).fetchone()[0]
         
+        actions = [PostbackAction(label="回主選單", data="action=switch_to_main_menu")]
         if total_attempts == 0:
             reply_text = "您尚未做過任何測驗，沒有分析資料。"
-            actions = [PostbackAction(label="回目錄", data="action=show_toc")]
         else:
             error_rate = (wrong_attempts / total_attempts) * 100
             reply_text = f"📊 您的學習分析報告\n\n整體錯誤率: {error_rate:.1f}%\n(答錯 {wrong_attempts} 題 / 共 {total_attempts} 題)"
@@ -220,19 +219,17 @@ def handle_postback(event):
             """, (user_id,))
             top_error_chapter = cursor.fetchone()
 
-            actions = []
             if top_error_chapter and top_error_chapter['error_rate'] > 0:
                 ch_id = top_error_chapter['chapter_id']
                 reply_text += f"\n\n您最需要加強的是： Chapter {ch_id}"
-                actions.append(PostbackAction(label=f"複習 Chapter {ch_id}", data=f"action=read_chapter&chapter_id={ch_id}"))
-                actions.append(PostbackAction(label=f"重做 Chapter {ch_id} 測驗", data=f"action=do_quiz&chapter_id={ch_id}"))
+                actions.insert(0, PostbackAction(label=f"重做 Chapter {ch_id} 測驗", data=f"action=do_quiz&chapter_id={ch_id}"))
+                actions.insert(0, PostbackAction(label=f"複習 Chapter {ch_id}", data=f"action=read_chapter&chapter_id={ch_id}"))
 
         conn.close()
         template = ButtonsTemplate(title="學習分析報告", text=reply_text, actions=actions)
         line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TemplateMessage(alt_text="學習分析報告", template=template)]))
 
     elif action == 'submit_answer':
-        # (此區塊與上一版相同)
         chapter_id, section_id, user_answer = int(params.get('chapter_id', [1])[0]), int(params.get('section_id', [1])[0]), params.get('answer', [None])[0]
         chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
         quiz_section = next((s for s in chapter['sections'] if s['section_id'] == section_id), None)
@@ -255,13 +252,11 @@ def handle_postback(event):
         template = ButtonsTemplate(title="作答結果", text=feedback_text, actions=actions)
         line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TemplateMessage(alt_text="作答結果", template=template)]))
 
-
 def handle_navigation(reply_token, line_api, user_id, chapter_id, section_id):
     """處理導覽與測驗顯示，並更新進度"""
-    # (此函式與上一版程式碼完全相同)
     try:
         conn = get_db_connection()
-        conn.execute("UPDATE users SET current_chapter_id = ?, current_section_id = ?, last_seen = CURRENT_TIMESTAMP WHERE line_user_id = ?",(chapter_id, section_id, user_id))
+        conn.execute("UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?",(chapter_id, section_id, user_id))
         conn.commit()
         conn.close()
         print(f">>> 已更新使用者 {user_id} 的進度至 CH {chapter_id}, SEC {section_id}")
@@ -287,7 +282,7 @@ def handle_navigation(reply_token, line_api, user_id, chapter_id, section_id):
         if any(sec['section_id'] == section_id + 1 for sec in chapter['sections']):
             actions.append(PostbackAction(label="下一段 ➡️", data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id+1}"))
         actions.append(PostbackAction(label="⭐ 標記此段", data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"))
-        actions.append(PostbackAction(label="回目錄", data="action=show_toc"))
+        actions.append(PostbackAction(label="回主選單", data="action=switch_to_main_menu"))
         template = ButtonsTemplate(title=f"導覽選單 (第 {section_id} 段)", text="請選擇下一步：", actions=actions[:4])
         messages_to_reply.append(TemplateMessage(alt_text=f"導覽選單", template=template))
     elif current_section['type'] == 'quiz':
@@ -298,10 +293,9 @@ def handle_navigation(reply_token, line_api, user_id, chapter_id, section_id):
             if len(label_text) > 20:
                 label_text = label_text[:17] + "..."
             quick_reply_items.append(QuickReplyItem(action=PostbackAction(label=label_text, display_text=f"我選 {option_key}", data=f"action=submit_answer&chapter_id={chapter_id}&section_id={section_id}&answer={option_key}")))
-        messages_to_reply.append(TextMessage(text=quiz['question'], quick_reply=QuickReply(items=quick_reply_items)))
+        messages_to_reply.append(TextMessage(text=quiz['question'], quick_reply=QuickReply(items=quick_reply_items[:13])))
     
     line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=messages_to_reply[:5]))
-
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080)
