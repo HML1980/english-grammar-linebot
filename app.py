@@ -11,7 +11,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi,
     ReplyMessageRequest, TextMessage, ImageMessage, PostbackAction,
     TemplateMessage, ButtonsTemplate, CarouselTemplate, CarouselColumn,
-    QuickReply, QuickReplyItem
+    QuickReply, QuickReplyItem, LinkRichMenuIdToUserRequest
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, PostbackEvent, FollowEvent
 
@@ -118,24 +118,40 @@ init_database()
 
 # --- 圖文選單處理函式 ---
 def safe_link_rich_menu(line_api, user_id, rich_menu_id):
-    """安全地切換圖文選單 - 使用 HTTP API"""
+    """安全地切換圖文選單"""
     try:
-        headers = {
-            'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
-        response = requests.post(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            print(f">>> 圖文選單切換成功: {rich_menu_id}")
+        # 方法1: 嘗試使用正確的 SDK 方法
+        request = LinkRichMenuIdToUserRequest(richMenuId=rich_menu_id)
+        line_api.link_rich_menu_id_to_user(user_id, request)
+        print(f">>> 圖文選單切換成功 (SDK): {rich_menu_id}")
+        return True
+    except Exception as e1:
+        print(f">>> SDK 方法1失敗: {e1}")
+        try:
+            # 方法2: 嘗試另一種 SDK 方法
+            line_api.link_rich_menu_id_to_user(user_id=user_id, rich_menu_id=rich_menu_id)
+            print(f">>> 圖文選單切換成功 (SDK 方法2): {rich_menu_id}")
             return True
-        else:
-            print(f">>> 切換失敗: {response.status_code} - {response.text}")
-            return False
-    except Exception as e:
-        print(f">>> 切換圖文選單時發生錯誤: {e}")
-        return False
+        except Exception as e2:
+            print(f">>> SDK 方法2失敗: {e2}")
+            # 方法3: 使用 HTTP API 作為備案
+            try:
+                headers = {
+                    'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
+                    'Content-Type': 'application/json'
+                }
+                url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
+                response = requests.post(url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    print(f">>> 圖文選單切換成功 (HTTP): {rich_menu_id}")
+                    return True
+                else:
+                    print(f">>> HTTP 切換失敗: {response.status_code} - {response.text}")
+                    return False
+            except Exception as e3:
+                print(f">>> HTTP API 也失敗: {e3}")
+                return False
 
 def safe_get_user_info(line_api, user_id):
     """安全地取得使用者資訊"""
@@ -168,81 +184,6 @@ def callback():
 def health_check():
     """健康檢查端點"""
     return {"status": "healthy", "chapters_loaded": len(book_data.get('chapters', []))}
-
-# --- 訊息建立函式 ---
-def create_carousel_menu(user_id):
-    """建立主目錄，包含繼續閱讀和我的書籤"""
-    try:
-        columns = []
-        conn = get_db_connection()
-        
-        # 查詢使用者進度
-        user_progress = conn.execute(
-            "SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", 
-            (user_id,)
-        ).fetchone()
-        
-        # 查詢書籤數量
-        bookmark_count = conn.execute(
-            "SELECT COUNT(*) FROM bookmarks WHERE line_user_id = ?", 
-            (user_id,)
-        ).fetchone()[0]
-        
-        conn.close()
-
-        # 如果有閱讀進度，顯示繼續閱讀選項
-        if (user_progress and 
-            user_progress['current_chapter_id'] is not None and 
-            user_progress['current_section_id'] is not None):
-            
-            chapter_id = user_progress['current_chapter_id']
-            section_id = user_progress['current_section_id']
-            columns.append(CarouselColumn(
-                thumbnail_image_url="https://i.imgur.com/F0fT8w7.png",
-                title="繼續閱讀",
-                text=f"您上次看到第 {chapter_id} 章，第 {section_id} 段",
-                actions=[PostbackAction(
-                    label="從上次進度開始", 
-                    display_text="繼續上次的閱讀進度", 
-                    data="action=resume_reading"
-                )]
-            ))
-        
-        # 書籤選項
-        columns.append(CarouselColumn(
-            thumbnail_image_url="https://i.imgur.com/NKYN3DE.png",
-            title="我的書籤",
-            text=f"您已標記 {bookmark_count} 個段落",
-            actions=[PostbackAction(
-                label="查看書籤", 
-                display_text="查看我的書籤", 
-                data="action=view_bookmarks"
-            )]
-        ))
-
-        # 章節選項
-        for chapter in book_data['chapters'][:8]:  # 限制最多8個章節
-            short_title = chapter['title'][5:] if len(chapter['title']) > 5 else chapter['title']
-            columns.append(CarouselColumn(
-                thumbnail_image_url=chapter.get('image_url', 'https://i.imgur.com/default.png'),
-                title=f"Chapter {chapter['chapter_id']}",
-                text=short_title[:60], 
-                actions=[PostbackAction(
-                    label="開始閱讀", 
-                    display_text=f"開始閱讀 {short_title}", 
-                    data=f"action=view_chapter&chapter_id={chapter['chapter_id']}"
-                )]
-            ))
-        
-        # 限制 carousel 最多10個欄位
-        return TemplateMessage(
-            alt_text='英文文法攻略 目錄', 
-            template=CarouselTemplate(columns=columns[:10])
-        )
-        
-    except Exception as e:
-        print(f">>> 建立主目錄時發生錯誤: {e}")
-        return TextMessage(text="抱歉，建立主目錄時發生錯誤。請稍後再試。")
 
 # --- 事件處理 ---
 @handler.add(FollowEvent)
@@ -304,11 +245,11 @@ def handle_message(event):
         elif 'help' in text.lower() or '幫助' in text or '說明' in text:
             help_text = """使用說明：
 
-• 點擊下方選單按鈕進行操作
-• 選擇章節開始閱讀
-• 可隨時標記重要段落
-• 完成章節後進行測驗
-• 查看學習分析了解進度
+點擊下方選單按鈕進行操作
+選擇章節開始閱讀
+可隨時標記重要段落
+完成章節後進行測驗
+查看學習分析了解進度
 
 輸入「目錄」可回到主選單"""
             
@@ -553,20 +494,19 @@ def handle_view_analytics(user_id, reply_token, line_api):
         actions = [PostbackAction(label="回主選單", data="action=switch_to_main_menu")]
         
         if total_attempts == 0:
-            reply_text = "您尚未做過任何測驗，沒有分析資料。"
+            reply_text = "您尚未做過測驗"
         else:
             error_rate = (wrong_attempts / total_attempts) * 100
-            reply_text = f"整體錯誤率: {error_rate:.1f}%\n答錯 {wrong_attempts}/{total_attempts} 題"
+            reply_text = f"錯誤率: {error_rate:.1f}%\n答錯 {wrong_attempts}/{total_attempts} 題"
             
             # 找出錯誤率最高的章節
             cursor = conn.execute("""
                 SELECT chapter_id, 
-                       CAST(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100 AS error_rate,
-                       COUNT(*) as attempt_count
+                       CAST(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100 AS error_rate
                 FROM quiz_attempts 
                 WHERE line_user_id = ? 
                 GROUP BY chapter_id 
-                HAVING attempt_count >= 3
+                HAVING COUNT(*) >= 3
                 ORDER BY error_rate DESC, chapter_id ASC 
                 LIMIT 1
             """, (user_id,))
@@ -575,7 +515,7 @@ def handle_view_analytics(user_id, reply_token, line_api):
             
             if top_error_chapter and top_error_chapter['error_rate'] > 0:
                 ch_id = top_error_chapter['chapter_id']
-                reply_text += f"\n\n建議加強: Ch{ch_id}"
+                reply_text += f"\n建議加強: Ch{ch_id}"
                 actions.insert(0, PostbackAction(
                     label=f"重做Ch{ch_id}", 
                     data=f"action=switch_to_chapter_menu&chapter_id={ch_id}"
@@ -585,25 +525,19 @@ def handle_view_analytics(user_id, reply_token, line_api):
         
         template = ButtonsTemplate(
             title="學習分析", 
-            text=reply_text[:60], # 限制文字長度在60字元內
+            text=reply_text, 
             actions=actions[:4]
         )
         
         line_api.reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token, 
-                messages=[TemplateMessage(alt_text="學習分析報告", template=template)]
+                messages=[TemplateMessage(alt_text="學習分析", template=template)]
             )
         )
         
     except Exception as e:
         print(f">>> 處理學習分析時發生錯誤: {e}")
-        line_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token, 
-                messages=[TextMessage(text="分析資料載入失敗，請稍後再試。")]
-            )
-        )
 
 def handle_add_bookmark(params, user_id, reply_token, line_api):
     """處理新增書籤"""
@@ -620,7 +554,7 @@ def handle_add_bookmark(params, user_id, reply_token, line_api):
         ).fetchone()
         
         if existing:
-            reply_text = f"第 {chapter_id} 章第 {section_id} 段已在您的書籤中！"
+            reply_text = f"第 {chapter_id} 章第 {section_id} 段已在書籤中！"
         else:
             conn.execute(
                 "INSERT INTO bookmarks (line_user_id, chapter_id, section_id) VALUES (?, ?, ?)",
@@ -663,7 +597,7 @@ def handle_submit_answer(params, user_id, reply_token, line_api):
         correct_answer = quiz_section['content']['answer']
         is_correct = user_answer == correct_answer
         
-        feedback_text = "答對了！很棒！" if is_correct else f"答錯了，正確答案是 {correct_answer}"
+        feedback_text = "答對了！" if is_correct else f"答錯了，正確答案是 {correct_answer}"
         
         # 儲存答題記錄
         try:
@@ -745,12 +679,11 @@ def handle_navigation(reply_token, line_api, user_id, chapter_id, section_id):
         if not current_section:
             # 章節結束
             actions = [
-                PostbackAction(label="回主選單", data="action=switch_to_main_menu"),
-                PostbackAction(label="選擇其他章節", data="action=switch_to_main_menu")
+                PostbackAction(label="回主選單", data="action=switch_to_main_menu")
             ]
             template = ButtonsTemplate(
                 title="章節完成！", 
-                text=f"恭喜您完成了 {chapter['title']}！", 
+                text=f"恭喜完成 {chapter['title'][:30]}！", 
                 actions=actions
             )
             messages_to_reply.append(TemplateMessage(alt_text="章節結束", template=template))
@@ -786,7 +719,7 @@ def handle_navigation(reply_token, line_api, user_id, chapter_id, section_id):
             actions.append(PostbackAction(label="回主選單", data="action=switch_to_main_menu"))
             
             template = ButtonsTemplate(
-                title=f"導覽選單 (第 {section_id} 段)", 
+                title=f"導覽 (第 {section_id} 段)", 
                 text="請選擇下一步操作：", 
                 actions=actions[:4]  # 限制最多4個按鈕
             )
