@@ -93,7 +93,7 @@ def handle_follow(event):
         conn.close()
     except Exception as e:
         print(f">>> 儲存使用者資料時發生錯誤: {e}")
-    line_api_blob.link_rich_menu_id_to_user(user_id, MAIN_RICH_MENU_ID)
+    line_api_blob.link_rich_menu_id_to_user(user_id, MAIN_RICH_MENU_ID) # 使用修正後的 API
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
