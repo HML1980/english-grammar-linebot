@@ -96,26 +96,35 @@ def load_book_data():
 book_data = load_book_data()
 init_database()
 
-# --- 圖文選單處理（只使用 HTTP API）---
+# --- 圖文選單處理（修正方法名稱）---
 def switch_rich_menu(user_id, rich_menu_id):
-    """使用 HTTP API 切換圖文選單"""
+    """使用正確的 LINE API 切換圖文選單"""
     try:
-        headers = {
-            'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
-        response = requests.post(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            print(f">>> 圖文選單切換成功: {rich_menu_id}")
-            return True
-        else:
-            print(f">>> 切換失敗: {response.status_code}")
-            return False
+        line_api = MessagingApi(ApiClient(configuration))
+        # 修正：使用正確的方法名稱
+        line_api.link_rich_menu_id_to_user(user_id, rich_menu_id)
+        print(f">>> 圖文選單切換成功: {rich_menu_id}")
+        return True
     except Exception as e:
         print(f">>> 切換圖文選單錯誤: {e}")
-        return False
+        # 備用方案：使用 HTTP API
+        try:
+            headers = {
+                'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
+                'Content-Type': 'application/json'
+            }
+            url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
+            response = requests.post(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                print(f">>> HTTP API 圖文選單切換成功: {rich_menu_id}")
+                return True
+            else:
+                print(f">>> HTTP API 切換失敗: {response.status_code}")
+                return False
+        except Exception as e2:
+            print(f">>> HTTP API 切換錯誤: {e2}")
+            return False
 
 # --- Webhook 路由 ---
 @app.route("/callback", methods=['POST'])
@@ -216,6 +225,12 @@ def handle_postback(event):
         
         if action == 'switch_to_main_menu':
             switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
+            line_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=reply_token,
+                    messages=[TextMessage(text="已切換至主選單")]
+                )
+            )
             
         elif action == 'switch_to_chapter_menu':
             chapter_id = int(params.get('chapter_id', [1])[0])
@@ -264,8 +279,37 @@ def handle_postback(event):
         elif action == 'submit_answer':
             handle_answer(params, user_id, reply_token, line_api)
             
+        elif action == 'resume_reading':
+            handle_resume_reading(user_id, reply_token, line_api)
+            
     except Exception as e:
         print(f">>> Postback 處理錯誤: {e}")
+
+def handle_resume_reading(user_id, reply_token, line_api):
+    """處理繼續閱讀功能"""
+    try:
+        conn = get_db_connection()
+        user = conn.execute(
+            "SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", 
+            (user_id,)
+        ).fetchone()
+        conn.close()
+        
+        if user and user['current_chapter_id']:
+            chapter_id = user['current_chapter_id']
+            section_id = user['current_section_id'] or 1
+            
+            print(f">>> 已更新使用者 {user_id} 的進度至 CH {chapter_id}, SEC {section_id}")
+            handle_navigation(user_id, chapter_id, section_id, reply_token, line_api)
+        else:
+            line_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=reply_token,
+                    messages=[TextMessage(text="尚未開始任何章節\n\n請先選擇章節")]
+                )
+            )
+    except Exception as e:
+        print(f">>> 繼續閱讀錯誤: {e}")
 
 def handle_chapter_action(action, user_id, reply_token, line_api):
     """處理章節動作"""
@@ -327,13 +371,14 @@ def handle_analytics(user_id, reply_token, line_api):
                 (user_id,)
             ).fetchone()[0]
             error_rate = (wrong / total) * 100
-            text = f"錯誤率: {error_rate:.1f}%"  # 簡短文字
+            # 修正：確保文字不超過 60 字符
+            text = f"錯誤率: {error_rate:.1f}%"
         
         conn.close()
         
         template = ButtonsTemplate(
             title="學習分析",
-            text=text,  # 確保不超過60字元
+            text=text,  # 現在確保不超過60字元
             actions=[PostbackAction(label="回主選單", data="action=switch_to_main_menu")]
         )
         
@@ -362,6 +407,8 @@ def handle_bookmarks(user_id, reply_token, line_api):
             (user_id,)
         ).fetchall()
         conn.close()
+        
+        print(f">>> 收到來自 {user_id} 的 Postback: action=view_bookmarks")
         
         if not bookmarks:
             line_api.reply_message(
@@ -409,7 +456,7 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
         conn.commit()
         conn.close()
         
-        print(f">>> 更新進度: CH{chapter_id} SEC{section_id}")
+        print(f">>> 收到來自 {user_id} 的 Postback: action=navigate")
         
         # 找章節和段落
         chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
