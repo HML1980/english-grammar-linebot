@@ -371,6 +371,10 @@ def handle_postback(event):
             # 對應「本章測驗題」按鈕
             handle_chapter_action('do_quiz', user_id, reply_token, line_api)
             
+        elif action == 'test_chapter_menu':
+            # 新增：測試切換章節選單功能
+            force_switch_chapter_menu(user_id, reply_token, line_api)
+            
         elif action in ['read_chapter', 'resume_chapter', 'do_quiz']:
             handle_chapter_action(action, user_id, reply_token, line_api)
             
