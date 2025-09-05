@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+"""
+更新原有的圖文選單建立腳本
+根據你提供的圖片調整精確座標
+"""
 import os
 import json
 import requests
@@ -6,7 +10,7 @@ import time
 
 # --- 請填寫您的 Channel Access Token ---
 # 確保引號內只有您的金鑰，沒有其他多餘的字元
-CHANNEL_ACCESS_TOKEN = "5BvBNjyt6NrqujdHjczXYOSYvbF/WQIbhzsnrJKzcHqBoc2n12y34Ccc5IzOWRsKe/zqRtZuSprwjBlYR9PcPbO2PH/s8ZVsaBNMIXrU7GyAqpDSTrWaGbQbdg8vBd27ynXcqOKT8UfSC4r1gBwynwdB04t89/1O/w1cDnyilFU="
+CHANNEL_ACCESS_TOKEN = "5BvBNjyt6NrqujdHjczXYOSYvbF/WQIbhzsnrJKzcHqBoc2n12y34Ccc5IzOWRsKe/zqRtZuSprwjBlYR9PcPbO2PH/s8ZVsaBNMIXrU7GyAqpDSTrWaGbQbdg8vBd27ynXcqOKT8UfSC4r1gBwynwdB04t89/1O/w1cDnyilFU="  # 請填入你的 Token
 # ------------------------------------
 
 # --- 建立請求標頭 ---
@@ -24,69 +28,109 @@ def get_upload_headers():
         'Content-Type': 'image/png'
     }
 
-# --- 主選單 (Main Menu) 的設定 ---
+# --- 更新後的主選單設定 ---
 main_menu_config = {
-    "size": {"width": 2500, "height": 1686},
+    "size": {"width": 1330, "height": 843},  # 根據你的圖片調整
     "selected": True,
-    "name": "MainMenu_v4",  # 更新版本號
+    "name": "MainMenu_Updated_v3",
     "chatBarText": "查看主選單",
     "areas": [
-        # 第一排 - 章節 1-3
-        {"bounds": {"x": 86, "y": 484, "width": 430, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=1"}},
-        {"bounds": {"x": 558, "y": 484, "width": 430, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=2"}},
-        {"bounds": {"x": 1032, "y": 484, "width": 430, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=3"}},
+        # 閱讀內容（左上藍色區域）
+        {
+            "bounds": {"x": 22, "y": 158, "width": 436, "height": 530}, 
+            "action": {"type": "postback", "data": "action=read_content"}
+        },
         
-        # 第二排 - 章節 4-6
-        {"bounds": {"x": 86, "y": 816, "width": 430, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=4"}},
-        {"bounds": {"x": 558, "y": 816, "width": 430, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=5"}},
-        {"bounds": {"x": 1032, "y": 816, "width": 430, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=6"}},
+        # 上次進度（中間藍色區域）
+        {
+            "bounds": {"x": 458, "y": 158, "width": 436, "height": 530}, 
+            "action": {"type": "postback", "data": "action=continue_reading"}
+        },
         
-        # 第三排 - 章節 7
-        {"bounds": {"x": 86, "y": 1148, "width": 1376, "height": 290}, 
-         "action": {"type": "postback", "data": "action=switch_to_chapter_menu&chapter_id=7"}},
+        # 本章測驗題（右上藍色區域）
+        {
+            "bounds": {"x": 894, "y": 158, "width": 436, "height": 530}, 
+            "action": {"type": "postback", "data": "action=chapter_quiz"}
+        },
         
-        # 右側功能區
-        {"bounds": {"x": 1540, "y": 484, "width": 870, "height": 290}, 
-         "action": {"type": "postback", "data": "action=resume_reading"}},
-        {"bounds": {"x": 1540, "y": 816, "width": 870, "height": 290}, 
-         "action": {"type": "postback", "data": "action=view_bookmarks"}},
-        {"bounds": {"x": 1540, "y": 1148, "width": 870, "height": 290}, 
-         "action": {"type": "postback", "data": "action=view_analytics"}}
+        # 主選單按鈕（左下灰色區域）
+        {
+            "bounds": {"x": 318, "y": 714, "width": 324, "height": 107}, 
+            "action": {"type": "postback", "data": "action=switch_to_main_menu"}
+        },
+        
+        # 章節選單按鈕（右下綠色區域）
+        {
+            "bounds": {"x": 700, "y": 714, "width": 324, "height": 107}, 
+            "action": {"type": "postback", "data": "action=show_chapter_menu"}
+        }
     ]
 }
 
-# --- 章節選單 (Chapter Menu) 的設定 ---
+# --- 更新後的章節選單設定 ---
 chapter_menu_config = {
-    "size": {"width": 2500, "height": 1686},
+    "size": {"width": 1330, "height": 843},
     "selected": False,
-    "name": "ChapterMenu_v4",  # 更新版本號
+    "name": "ChapterMenu_Updated_v3",
     "chatBarText": "查看章節功能",
     "areas": [
-        # 主要功能區域
-        {"bounds": {"x": 80, "y": 420, "width": 760, "height": 860}, 
-         "action": {"type": "postback", "data": "action=read_chapter"}},
-        {"bounds": {"x": 870, "y": 420, "width": 760, "height": 860}, 
-         "action": {"type": "postback", "data": "action=resume_chapter"}},
-        {"bounds": {"x": 1660, "y": 420, "width": 760, "height": 860}, 
-         "action": {"type": "postback", "data": "action=do_quiz"}},
+        # 第一排章節按鈕
+        # 第1章（左上灰色）
+        {"bounds": {"x": 42, "y": 182, "width": 218, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=1"}},
         
-        # 返回按鈕
-        {"bounds": {"x": 425, "y": 1445, "width": 810, "height": 180}, 
+        # 第2章（中上灰色）
+        {"bounds": {"x": 318, "y": 182, "width": 218, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=2"}},
+        
+        # 第3章（右上灰色）
+        {"bounds": {"x": 594, "y": 182, "width": 218, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=3"}},
+        
+        # 第二排章節按鈕
+        # 第4章（左中灰色）
+        {"bounds": {"x": 42, "y": 352, "width": 218, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=4"}},
+        
+        # 第5章（中中灰色）
+        {"bounds": {"x": 318, "y": 352, "width": 218, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=5"}},
+        
+        # 第6章（右中灰色）
+        {"bounds": {"x": 594, "y": 352, "width": 218, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=6"}},
+        
+        # 第7章（大的灰色區域）
+        {"bounds": {"x": 42, "y": 522, "width": 770, "height": 148}, 
+         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=7"}},
+        
+        # 右側功能區域
+        # 繼續閱讀（右上藍色）
+        {"bounds": {"x": 820, "y": 182, "width": 488, "height": 148}, 
+         "action": {"type": "postback", "data": "action=continue_reading"}},
+        
+        # 我的書籤（右中藍色）
+        {"bounds": {"x": 820, "y": 352, "width": 488, "height": 148}, 
+         "action": {"type": "postback", "data": "action=view_bookmarks"}},
+        
+        # 錯誤分析（右下藍色）
+        {"bounds": {"x": 820, "y": 522, "width": 488, "height": 148}, 
+         "action": {"type": "postback", "data": "action=view_analytics"}},
+        
+        # 底部按鈕
+        # 主選單按鈕（左下綠色）
+        {"bounds": {"x": 318, "y": 714, "width": 324, "height": 107}, 
          "action": {"type": "postback", "data": "action=switch_to_main_menu"}},
-        {"bounds": {"x": 80, "y": 150, "width": 380, "height": 150}, 
-         "action": {"type": "postback", "data": "action=switch_to_main_menu"}}
+        
+        # 章節選單按鈕（右下灰色）
+        {"bounds": {"x": 700, "y": 714, "width": 324, "height": 107}, 
+         "action": {"type": "postback", "data": "action=show_chapter_menu"}}
     ]
 }
 
 def validate_token():
     """驗證 Channel Access Token 是否有效"""
-    if "【請在這裡貼上您完整的 Channel Access Token】" in CHANNEL_ACCESS_TOKEN:
+    if "你的_CHANNEL_ACCESS_TOKEN" in CHANNEL_ACCESS_TOKEN:
         print("❌ 錯誤：請先在程式碼中填寫您的 Channel Access Token！")
         return False
     
@@ -217,7 +261,7 @@ def create_rich_menu(config, image_path, set_as_default=False):
 
 def main():
     """主程式"""
-    print("🚀 LINE Bot 圖文選單設定程式啟動")
+    print("🚀 LINE Bot 圖文選單更新程式啟動")
     print("=" * 50)
     
     # 驗證 Token
@@ -226,7 +270,7 @@ def main():
     
     print("✅ Channel Access Token 格式檢查通過")
     
-    # 定義圖片路徑
+    # 定義圖片路徑（你可能需要調整這些路徑）
     main_image_path = './images/rich_menu_main.png'
     chapter_image_path = './images/rich_menu_chapter.png'
     
@@ -253,14 +297,14 @@ def main():
     print("\n" + "=" * 50)
     print("📋 開始建立新的圖文選單...")
     
-    # 建立主選單
+    # 建立主選單（更新版）
     main_id = create_rich_menu(
         config=main_menu_config, 
         image_path=main_image_path, 
         set_as_default=True
     )
     
-    # 建立章節選單
+    # 建立章節選單（更新版）
     chapter_id = create_rich_menu(
         config=chapter_menu_config, 
         image_path=chapter_image_path, 
@@ -271,7 +315,7 @@ def main():
     print("\n" + "=" * 50)
     
     if main_id and chapter_id:
-        print("🎉 圖文選單設定完成！")
+        print("🎉 圖文選單更新完成！")
         print("\n📋 請將這兩個新的 ID 複製起來，更新到 Render 的環境變數中:")
         print(f"MAIN_RICH_MENU_ID: {main_id}")
         print(f"CHAPTER_RICH_MENU_ID: {chapter_id}")
@@ -284,6 +328,7 @@ def main():
         print("5. 點擊 Save Changes")
         
         print("\n✅ 設定完成後，您的 LINE Bot 就可以使用新的圖文選單了！")
+        print("\n🔧 如果座標有偏移，請調整 main_menu_config 和 chapter_menu_config 中的 bounds 設定")
         
     elif main_id or chapter_id:
         print("⚠️ 部分圖文選單建立成功")
@@ -308,3 +353,22 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ 程式執行時發生未知錯誤: {e}")
         print("💡 請檢查程式碼和環境設定")
+
+# 座標調整說明：
+"""
+如果圖文選單按鈕位置有偏移，請調整以下座標：
+
+主選單 (main_menu_config):
+- 閱讀內容: {"x": 22, "y": 158, "width": 436, "height": 530}
+- 上次進度: {"x": 458, "y": 158, "width": 436, "height": 530}
+- 本章測驗題: {"x": 894, "y": 158, "width": 436, "height": 530}
+- 主選單按鈕: {"x": 318, "y": 714, "width": 324, "height": 107}
+- 章節選單按鈕: {"x": 700, "y": 714, "width": 324, "height": 107}
+
+章節選單 (chapter_menu_config):
+- 1-6章: 分別對應不同的小方格
+- 第7章: 橫跨較大的區域
+- 右側功能按鈕: 繼續閱讀、我的書籤、錯誤分析
+
+如需精確調整，請使用圖片編輯軟體測量座標。
+"""

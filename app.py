@@ -350,46 +350,26 @@ def handle_postback(event):
                 )
             )
             
-        elif action == 'switch_to_chapter_menu':
+        elif action == 'switch_to_chapter_menu' or action == 'show_chapter_menu':
+            # 顯示章節選擇
+            handle_show_chapter_menu(user_id, reply_token, line_api)
+            
+        elif action == 'select_chapter':
             chapter_id = int(params.get('chapter_id', [1])[0])
+            handle_select_chapter(user_id, chapter_id, reply_token, line_api)
             
-            # 更新使用者章節
-            conn = get_db_connection()
-            conn.execute(
-                "UPDATE users SET current_chapter_id = ? WHERE line_user_id = ?", 
-                (chapter_id, user_id)
-            )
-            conn.commit()
-            conn.close()
+        # 新增：對應圖文選單的功能
+        elif action == 'read_content':
+            # 對應「閱讀內容」按鈕
+            handle_chapter_action('read_chapter', user_id, reply_token, line_api)
             
-            # 找章節標題
-            chapter_title = f"Chapter {chapter_id}"
-            chapter_data = None
-            for ch in book_data.get('chapters', []):
-                if ch['chapter_id'] == chapter_id:
-                    chapter_title = ch['title'][:30]
-                    chapter_data = ch
-                    break
+        elif action == 'continue_reading':
+            # 對應「上次進度」按鈕  
+            handle_resume_reading(user_id, reply_token, line_api)
             
-            # 計算章節統計
-            if chapter_data:
-                content_count = len([s for s in chapter_data['sections'] if s['type'] == 'content'])
-                quiz_count = len([s for s in chapter_data['sections'] if s['type'] == 'quiz'])
-                
-                chapter_info = f"已選擇：{chapter_title}\n\n📝 內容段落：{content_count} 段\n❓ 測驗題目：{quiz_count} 題\n\n點擊下方選單開始學習"
-            else:
-                chapter_info = f"已選擇：{chapter_title}\n\n點擊下方選單操作"
-            
-            # 先回復訊息
-            line_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TextMessage(text=chapter_info)]
-                )
-            )
-            
-            # 切換圖文選單
-            switch_rich_menu(user_id, CHAPTER_RICH_MENU_ID)
+        elif action == 'chapter_quiz':
+            # 對應「本章測驗題」按鈕
+            handle_chapter_action('do_quiz', user_id, reply_token, line_api)
             
         elif action in ['read_chapter', 'resume_chapter', 'do_quiz']:
             handle_chapter_action(action, user_id, reply_token, line_api)
@@ -426,6 +406,103 @@ def handle_postback(event):
             )
         except:
             pass
+
+# 新增：章節選擇功能
+def handle_show_chapter_menu(user_id, reply_token, line_api):
+    """顯示章節選擇選單"""
+    try:
+        columns = []
+        
+        for chapter in book_data['chapters'][:6]:  # 只顯示前6章，避免選單過長
+            chapter_id = chapter['chapter_id']
+            title = chapter['title']
+            
+            # 截斷標題避免過長
+            if len(title) > 30:
+                title = title[:27] + "..."
+            
+            columns.append(
+                CarouselColumn(
+                    thumbnail_image_url=chapter.get('image_url', 'https://via.placeholder.com/400x200'),
+                    title=f"第 {chapter_id} 章",
+                    text=title,
+                    actions=[
+                        PostbackAction(
+                            label="選擇此章節",
+                            data=f"action=select_chapter&chapter_id={chapter_id}"
+                        )
+                    ]
+                )
+            )
+        
+        # 如果有第7章，額外添加
+        if len(book_data['chapters']) > 6:
+            chapter = book_data['chapters'][6]
+            columns.append(
+                CarouselColumn(
+                    thumbnail_image_url=chapter.get('image_url', 'https://via.placeholder.com/400x200'),
+                    title=f"第 {chapter['chapter_id']} 章",
+                    text=chapter['title'][:30],
+                    actions=[
+                        PostbackAction(
+                            label="選擇此章節",
+                            data=f"action=select_chapter&chapter_id={chapter['chapter_id']}"
+                        )
+                    ]
+                )
+            )
+        
+        carousel = CarouselTemplate(columns=columns)
+        
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TemplateMessage(alt_text="選擇章節", template=carousel)]
+            )
+        )
+        
+    except Exception as e:
+        print(f">>> 章節選單錯誤: {e}")
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text="章節選單載入失敗")]
+            )
+        )
+
+def handle_select_chapter(user_id, chapter_id, reply_token, line_api):
+    """選擇章節並切換到章節功能選單"""
+    try:
+        # 更新使用者當前章節
+        conn = get_db_connection()
+        conn.execute(
+            "UPDATE users SET current_chapter_id = ? WHERE line_user_id = ?", 
+            (chapter_id, user_id)
+        )
+        conn.commit()
+        conn.close()
+        
+        # 找章節資料
+        chapter = next((ch for ch in book_data['chapters'] if ch['chapter_id'] == chapter_id), None)
+        if chapter:
+            content_count = len([s for s in chapter['sections'] if s['type'] == 'content'])
+            quiz_count = len([s for s in chapter['sections'] if s['type'] == 'quiz'])
+            
+            chapter_info = f"已選擇：{chapter['title']}\n\n📝 內容段落：{content_count} 段\n❓ 測驗題目：{quiz_count} 題\n\n現在可以使用下方圖文選單的功能：\n• 閱讀內容：從頭開始\n• 上次進度：跳到上次位置\n• 本章測驗題：開始練習"
+        else:
+            chapter_info = f"已選擇第 {chapter_id} 章"
+        
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=chapter_info)]
+            )
+        )
+        
+        # 不自動切換圖文選單，讓用戶使用主選單的功能
+        
+    except Exception as e:
+        print(f">>> 選擇章節錯誤: {e}")
 
 def handle_resume_reading(user_id, reply_token, line_api):
     """處理繼續閱讀功能"""
@@ -638,6 +715,7 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
         
         if not section:
             # 章節結束
+            # 章節結束
             template = ButtonsTemplate(
                 title="章節完成",
                 text=f"完成 {chapter['title'][:30]}\n\n恭喜！您已完成本章節",
@@ -649,45 +727,61 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
             messages.append(TemplateMessage(alt_text="章節完成", template=template))
             
         elif section['type'] == 'content':
-            # 內容段落 - 分段處理長內容
+            # 內容段落 - 使用 QuickReply 取代 ButtonTemplate，避免遮擋內容
             content = section['content']
             if len(content) > 1000:
                 content = content[:1000] + "\n\n...(內容較長，請點擊下一段繼續)"
                 
             messages.append(TextMessage(text=content))
             
-            # 導覽按鈕
-            actions = []
+            # 使用 QuickReply 取代 ButtonTemplate，避免遮擋內容
+            quick_items = []
+            
             if section_id > 1:
-                actions.append(PostbackAction(
-                    label="⬅️ 上一段",
-                    data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id-1}"
-                ))
+                quick_items.append(
+                    QuickReplyItem(
+                        action=PostbackAction(
+                            label="⬅️ 上一段",
+                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id-1}"
+                        )
+                    )
+                )
             
             if any(s['section_id'] == section_id + 1 for s in chapter['sections']):
-                actions.append(PostbackAction(
-                    label="➡️ 下一段",
-                    data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id+1}"
-                ))
+                quick_items.append(
+                    QuickReplyItem(
+                        action=PostbackAction(
+                            label="➡️ 下一段",
+                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id+1}"
+                        )
+                    )
+                )
                 
-            actions.append(PostbackAction(
-                label="🔖 標記",
-                data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"
-            ))
+            quick_items.extend([
+                QuickReplyItem(
+                    action=PostbackAction(
+                        label="🔖 標記",
+                        data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"
+                    )
+                ),
+                QuickReplyItem(
+                    action=PostbackAction(
+                        label="🏠 主選單",
+                        data="action=switch_to_main_menu"
+                    )
+                )
+            ])
             
-            actions.append(PostbackAction(label="🏠 主選單", data="action=switch_to_main_menu"))
-            
-            # 顯示進度
+            # 顯示進度資訊
             content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
             current_pos = next((i+1 for i, s in enumerate(content_sections) if s['section_id'] == section_id), 1)
-            progress_text = f"第 {current_pos}/{len(content_sections)} 段"
+            progress_text = f"📖 第 {current_pos}/{len(content_sections)} 段"
             
-            template = ButtonsTemplate(
-                title=progress_text,
-                text="選擇操作",
-                actions=actions[:4]  # LINE 限制最多4個按鈕
-            )
-            messages.append(TemplateMessage(alt_text="導覽", template=template))
+            # 使用簡潔的文字訊息 + QuickReply
+            messages.append(TextMessage(
+                text=progress_text,
+                quick_reply=QuickReply(items=quick_items)
+            ))
             
         elif section['type'] == 'quiz':
             # 測驗題
@@ -847,5 +941,5 @@ def handle_answer(params, user_id, reply_token, line_api):
 if __name__ == "__main__":
     print(">>> LINE Bot 啟動")
     print(f">>> 載入 {len(book_data.get('chapters', []))} 章節")
-    print(">>> 用戶體驗優化版本 v1.1")
+    print(">>> 用戶體驗優化版本 v2.0")
     app.run(host='0.0.0.0', port=8080, debug=False)
