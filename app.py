@@ -96,35 +96,25 @@ def load_book_data():
 book_data = load_book_data()
 init_database()
 
-# --- 圖文選單處理（修正方法名稱）---
+# --- 圖文選單處理（完全使用 HTTP API - 兼容 3.9.0）---
 def switch_rich_menu(user_id, rich_menu_id):
-    """使用正確的 LINE API 切換圖文選單"""
+    """使用 HTTP API 切換圖文選單 - 兼容 line-bot-sdk 3.9.0"""
     try:
-        line_api = MessagingApi(ApiClient(configuration))
-        # 修正：使用正確的方法名稱
-        line_api.link_rich_menu_id_to_user(user_id, rich_menu_id)
-        print(f">>> 圖文選單切換成功: {rich_menu_id}")
-        return True
+        headers = {
+            'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
+        }
+        url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
+        response = requests.post(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            print(f">>> 圖文選單切換成功: {rich_menu_id}")
+            return True
+        else:
+            print(f">>> 切換失敗: {response.status_code} - {response.text}")
+            return False
     except Exception as e:
         print(f">>> 切換圖文選單錯誤: {e}")
-        # 備用方案：使用 HTTP API
-        try:
-            headers = {
-                'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
-                'Content-Type': 'application/json'
-            }
-            url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
-            response = requests.post(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                print(f">>> HTTP API 圖文選單切換成功: {rich_menu_id}")
-                return True
-            else:
-                print(f">>> HTTP API 切換失敗: {response.status_code}")
-                return False
-        except Exception as e2:
-            print(f">>> HTTP API 切換錯誤: {e2}")
-            return False
+        return False
 
 # --- Webhook 路由 ---
 @app.route("/callback", methods=['POST'])
@@ -146,6 +136,10 @@ def callback():
 def health_check():
     return {"status": "healthy", "chapters": len(book_data.get('chapters', []))}
 
+@app.route("/", methods=['GET'])
+def index():
+    return {"message": "LINE Bot is running", "status": "healthy"}
+
 # --- 事件處理 ---
 @handler.add(FollowEvent)
 def handle_follow(event):
@@ -157,8 +151,10 @@ def handle_follow(event):
         try:
             profile = line_api.get_profile(user_id)
             display_name = profile.display_name
+            print(f">>> 新使用者已儲存: {display_name}")
         except:
             display_name = f"User_{user_id[-6:]}"
+            print(f">>> 新使用者已儲存: {display_name}")
         
         # 儲存使用者
         conn = get_db_connection()
@@ -168,8 +164,6 @@ def handle_follow(event):
         )
         conn.commit()
         conn.close()
-        
-        print(f">>> 新使用者: {display_name}")
         
         # 設定圖文選單
         switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
@@ -183,7 +177,7 @@ def handle_follow(event):
         )
         
     except Exception as e:
-        print(f">>> 處理關注事件錯誤: {e}")
+        print(f">>> [嚴重錯誤] handle 發生未知錯誤: {e}")
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
@@ -221,7 +215,7 @@ def handle_postback(event):
         params = parse_qs(data)
         action = params.get('action', [None])[0]
         
-        print(f">>> Postback: {action}")
+        print(f">>> 收到來自 {user_id} 的 Postback: {action}")
         
         if action == 'switch_to_main_menu':
             switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
@@ -251,12 +245,14 @@ def handle_postback(event):
                     chapter_title = ch['title'][:30]  # 限制長度
                     break
             
+            # 先回復訊息，再切換選單
             line_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[TextMessage(text=f"已選擇：{chapter_title}\n\n點擊下方選單操作")]
                 )
             )
+            # 延遲切換選單以避免衝突
             switch_rich_menu(user_id, CHAPTER_RICH_MENU_ID)
             
         elif action in ['read_chapter', 'resume_chapter', 'do_quiz']:
@@ -283,7 +279,7 @@ def handle_postback(event):
             handle_resume_reading(user_id, reply_token, line_api)
             
     except Exception as e:
-        print(f">>> Postback 處理錯誤: {e}")
+        print(f">>> [嚴重錯誤] handle 發生未知錯誤: {e}")
 
 def handle_resume_reading(user_id, reply_token, line_api):
     """處理繼續閱讀功能"""
