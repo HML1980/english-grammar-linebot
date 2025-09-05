@@ -96,9 +96,9 @@ def load_book_data():
 book_data = load_book_data()
 init_database()
 
-# --- 圖文選單處理（完全使用 HTTP API - 兼容 3.9.0）---
+# --- 圖文選單處理（純 HTTP API）---
 def switch_rich_menu(user_id, rich_menu_id):
-    """使用 HTTP API 切換圖文選單 - 兼容 line-bot-sdk 3.9.0"""
+    """使用純 HTTP API 切換圖文選單"""
     try:
         headers = {
             'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}',
@@ -110,7 +110,7 @@ def switch_rich_menu(user_id, rich_menu_id):
             print(f">>> 圖文選單切換成功: {rich_menu_id}")
             return True
         else:
-            print(f">>> 切換失敗: {response.status_code} - {response.text}")
+            print(f">>> 切換失敗: {response.status_code}")
             return False
     except Exception as e:
         print(f">>> 切換圖文選單錯誤: {e}")
@@ -151,10 +151,10 @@ def handle_follow(event):
         try:
             profile = line_api.get_profile(user_id)
             display_name = profile.display_name
-            print(f">>> 新使用者已儲存: {display_name}")
         except:
             display_name = f"User_{user_id[-6:]}"
-            print(f">>> 新使用者已儲存: {display_name}")
+        
+        print(f">>> 新使用者: {display_name}")
         
         # 儲存使用者
         conn = get_db_connection()
@@ -165,7 +165,7 @@ def handle_follow(event):
         conn.commit()
         conn.close()
         
-        # 設定圖文選單
+        # 設定圖文選單 - 使用 HTTP API
         switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
         
         # 發送歡迎訊息
@@ -177,7 +177,7 @@ def handle_follow(event):
         )
         
     except Exception as e:
-        print(f">>> [嚴重錯誤] handle 發生未知錯誤: {e}")
+        print(f">>> 處理關注事件錯誤: {e}")
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
@@ -242,17 +242,18 @@ def handle_postback(event):
             chapter_title = f"Chapter {chapter_id}"
             for ch in book_data.get('chapters', []):
                 if ch['chapter_id'] == chapter_id:
-                    chapter_title = ch['title'][:30]  # 限制長度
+                    chapter_title = ch['title'][:30]
                     break
             
-            # 先回復訊息，再切換選單
+            # 先回復訊息
             line_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[TextMessage(text=f"已選擇：{chapter_title}\n\n點擊下方選單操作")]
                 )
             )
-            # 延遲切換選單以避免衝突
+            
+            # 切換圖文選單
             switch_rich_menu(user_id, CHAPTER_RICH_MENU_ID)
             
         elif action in ['read_chapter', 'resume_chapter', 'do_quiz']:
@@ -279,7 +280,7 @@ def handle_postback(event):
             handle_resume_reading(user_id, reply_token, line_api)
             
     except Exception as e:
-        print(f">>> [嚴重錯誤] handle 發生未知錯誤: {e}")
+        print(f">>> Postback 處理錯誤: {e}")
 
 def handle_resume_reading(user_id, reply_token, line_api):
     """處理繼續閱讀功能"""
@@ -352,7 +353,7 @@ def handle_chapter_action(action, user_id, reply_token, line_api):
         print(f">>> 章節動作錯誤: {e}")
 
 def handle_analytics(user_id, reply_token, line_api):
-    """處理學習分析 - 修正文字長度問題"""
+    """處理學習分析 - 修正文字長度"""
     try:
         conn = get_db_connection()
         total = conn.execute(
@@ -367,14 +368,13 @@ def handle_analytics(user_id, reply_token, line_api):
                 (user_id,)
             ).fetchone()[0]
             error_rate = (wrong / total) * 100
-            # 修正：確保文字不超過 60 字符
-            text = f"錯誤率: {error_rate:.1f}%"
+            text = f"錯誤率 {error_rate:.1f}%"  # 移除冒號縮短文字
         
         conn.close()
         
         template = ButtonsTemplate(
             title="學習分析",
-            text=text,  # 現在確保不超過60字元
+            text=text,  # 確保不超過60字元
             actions=[PostbackAction(label="回主選單", data="action=switch_to_main_menu")]
         )
         
@@ -415,7 +415,7 @@ def handle_bookmarks(user_id, reply_token, line_api):
             )
         else:
             quick_reply_items = []
-            for bm in bookmarks[:10]:  # 限制數量
+            for bm in bookmarks[:10]:
                 ch_id, sec_id = bm['chapter_id'], bm['section_id']
                 quick_reply_items.append(
                     QuickReplyItem(
