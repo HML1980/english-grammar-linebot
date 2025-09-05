@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-更新原有的圖文選單建立腳本
-根據你提供的圖片調整精確座標
+修正版圖文選單建立腳本
+數字按鈕改為純數字格式，與 app.py 兼容
 """
 import os
 import json
@@ -28,12 +28,12 @@ def get_upload_headers():
         'Content-Type': 'image/png'
     }
 
-# --- 更新後的主選單設定 ---
+# --- 主選單設定（章節功能選單）---
 main_menu_config = {
-    "size": {"width": 1330, "height": 843},  # 根據你的圖片調整
+    "size": {"width": 1330, "height": 843},
     "selected": True,
-    "name": "MainMenu_Updated_v3",
-    "chatBarText": "查看主選單",
+    "name": "ChapterFunctionMenu_v4",
+    "chatBarText": "章節功能",
     "areas": [
         # 閱讀內容（左上藍色區域）
         {
@@ -67,42 +67,42 @@ main_menu_config = {
     ]
 }
 
-# --- 更新後的章節選單設定 ---
+# --- 章節選單設定（修正版 - 數字按鈕使用純數字）---
 chapter_menu_config = {
     "size": {"width": 1330, "height": 843},
     "selected": False,
-    "name": "ChapterMenu_Updated_v3",
-    "chatBarText": "查看章節功能",
+    "name": "ChapterSelectionMenu_Fixed_v4",
+    "chatBarText": "選擇章節",
     "areas": [
-        # 第一排章節按鈕
+        # 第一排章節按鈕 - 修正為純數字格式
         # 第1章（左上灰色）
         {"bounds": {"x": 42, "y": 182, "width": 218, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=1"}},
+         "action": {"type": "postback", "data": "1"}},
         
         # 第2章（中上灰色）
         {"bounds": {"x": 318, "y": 182, "width": 218, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=2"}},
+         "action": {"type": "postback", "data": "2"}},
         
         # 第3章（右上灰色）
         {"bounds": {"x": 594, "y": 182, "width": 218, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=3"}},
+         "action": {"type": "postback", "data": "3"}},
         
         # 第二排章節按鈕
         # 第4章（左中灰色）
         {"bounds": {"x": 42, "y": 352, "width": 218, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=4"}},
+         "action": {"type": "postback", "data": "4"}},
         
         # 第5章（中中灰色）
         {"bounds": {"x": 318, "y": 352, "width": 218, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=5"}},
+         "action": {"type": "postback", "data": "5"}},
         
         # 第6章（右中灰色）
         {"bounds": {"x": 594, "y": 352, "width": 218, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=6"}},
+         "action": {"type": "postback", "data": "6"}},
         
         # 第7章（大的灰色區域）
         {"bounds": {"x": 42, "y": 522, "width": 770, "height": 148}, 
-         "action": {"type": "postback", "data": "action=select_chapter&chapter_id=7"}},
+         "action": {"type": "postback", "data": "7"}},
         
         # 右側功能區域
         # 繼續閱讀（右上藍色）
@@ -261,7 +261,10 @@ def create_rich_menu(config, image_path, set_as_default=False):
 
 def main():
     """主程式"""
-    print("🚀 LINE Bot 圖文選單更新程式啟動")
+    print("🚀 LINE Bot 圖文選單修正程式啟動")
+    print("=" * 50)
+    print("📝 主要修正：數字按鈕改為純數字格式（1, 2, 3...）")
+    print("🔗 這樣就能與 app.py 的 data.isdigit() 檢查兼容")
     print("=" * 50)
     
     # 驗證 Token
@@ -280,8 +283,8 @@ def main():
         check_file_exists(chapter_image_path)
     ]):
         print("\n❌ 請確保以下圖片檔案存在：")
-        print("  - ./images/rich_menu_main.png")
-        print("  - ./images/rich_menu_chapter.png")
+        print("  - ./images/rich_menu_main.png    (章節功能選單圖片)")
+        print("  - ./images/rich_menu_chapter.png (章節選擇選單圖片)")
         return
     
     # 詢問是否要清理舊選單
@@ -295,16 +298,16 @@ def main():
         return
     
     print("\n" + "=" * 50)
-    print("📋 開始建立新的圖文選單...")
+    print("📋 開始建立修正版圖文選單...")
     
-    # 建立主選單（更新版）
+    # 建立章節功能選單（設為預設）
     main_id = create_rich_menu(
         config=main_menu_config, 
         image_path=main_image_path, 
         set_as_default=True
     )
     
-    # 建立章節選單（更新版）
+    # 建立章節選擇選單（數字按鈕已修正）
     chapter_id = create_rich_menu(
         config=chapter_menu_config, 
         image_path=chapter_image_path, 
@@ -315,27 +318,35 @@ def main():
     print("\n" + "=" * 50)
     
     if main_id and chapter_id:
-        print("🎉 圖文選單更新完成！")
-        print("\n📋 請將這兩個新的 ID 複製起來，更新到 Render 的環境變數中:")
+        print("🎉 修正版圖文選單建立完成！")
+        print("\n📋 重要變更說明：")
+        print("   • 數字按鈕 1-7 現在使用純數字格式")
+        print("   • 與 app.py 的 data.isdigit() 檢查完全兼容")
+        print("   • 點擊數字按鈕時會觸發章節選擇功能")
+        
+        print("\n🔧 請將這兩個新的 ID 更新到 Render 的環境變數：")
         print(f"MAIN_RICH_MENU_ID: {main_id}")
         print(f"CHAPTER_RICH_MENU_ID: {chapter_id}")
         
-        print("\n💡 環境變數設定步驟：")
+        print("\n💡 Render 環境變數更新步驟：")
         print("1. 登入 Render Dashboard")
         print("2. 選擇您的服務")
         print("3. 點擊 Environment 標籤")
         print("4. 更新上述兩個環境變數")
         print("5. 點擊 Save Changes")
+        print("6. 等待服務重新部署")
         
-        print("\n✅ 設定完成後，您的 LINE Bot 就可以使用新的圖文選單了！")
-        print("\n🔧 如果座標有偏移，請調整 main_menu_config 和 chapter_menu_config 中的 bounds 設定")
+        print("\n✅ 更新完成後測試：")
+        print("   • 點擊數字 1-7 應該能選擇對應章節")
+        print("   • 選擇章節後應該自動切換到章節功能選單")
+        print("   • Server logs 應該顯示 '偵測到純數字章節選擇'")
         
     elif main_id or chapter_id:
         print("⚠️ 部分圖文選單建立成功")
         if main_id:
-            print(f"✅ 主選單 ID: {main_id}")
+            print(f"✅ 章節功能選單 ID: {main_id}")
         if chapter_id:
-            print(f"✅ 章節選單 ID: {chapter_id}")
+            print(f"✅ 章節選擇選單 ID: {chapter_id}")
         print("❌ 請檢查錯誤訊息並重新執行")
         
     else:
@@ -354,21 +365,24 @@ if __name__ == "__main__":
         print(f"\n❌ 程式執行時發生未知錯誤: {e}")
         print("💡 請檢查程式碼和環境設定")
 
-# 座標調整說明：
+# 修正說明：
 """
-如果圖文選單按鈕位置有偏移，請調整以下座標：
+主要修正項目：
 
-主選單 (main_menu_config):
-- 閱讀內容: {"x": 22, "y": 158, "width": 436, "height": 530}
-- 上次進度: {"x": 458, "y": 158, "width": 436, "height": 530}
-- 本章測驗題: {"x": 894, "y": 158, "width": 436, "height": 530}
-- 主選單按鈕: {"x": 318, "y": 714, "width": 324, "height": 107}
-- 章節選單按鈕: {"x": 700, "y": 714, "width": 324, "height": 107}
+1. 數字按鈕格式修正：
+   舊格式: "action=select_chapter&chapter_id=1"
+   新格式: "1"
+   
+2. 與 app.py 的兼容性：
+   app.py 中的 data.isdigit() 檢查現在可以正確識別數字按鈕
 
-章節選單 (chapter_menu_config):
-- 1-6章: 分別對應不同的小方格
-- 第7章: 橫跨較大的區域
-- 右側功能按鈕: 繼續閱讀、我的書籤、錯誤分析
+3. 預期的執行流程：
+   用戶點擊數字 "1" → app.py 接收到 "1" → 觸發 handle_direct_chapter_selection
+   → 切換到章節功能選單
 
-如需精確調整，請使用圖片編輯軟體測量座標。
+4. 圖文選單對應：
+   MAIN_RICH_MENU_ID: 章節功能選單（閱讀內容、上次進度、本章測驗）
+   CHAPTER_RICH_MENU_ID: 章節選擇選單（數字 1-7 + 功能按鈕）
+
+如果座標有偏移，請調整 bounds 設定中的 x, y, width, height 值。
 """
