@@ -492,6 +492,7 @@ def handle_select_chapter(user_id, chapter_id, reply_token, line_api):
         else:
             chapter_info = f"已選擇第 {chapter_id} 章"
         
+        # 先發送訊息
         line_api.reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token,
@@ -499,7 +500,13 @@ def handle_select_chapter(user_id, chapter_id, reply_token, line_api):
             )
         )
         
-        # 不自動切換圖文選單，讓用戶使用主選單的功能
+        # 切換到章節功能圖文選單（延遲一秒避免衝突）
+        import threading
+        def delayed_switch():
+            time.sleep(1)
+            switch_rich_menu(user_id, CHAPTER_RICH_MENU_ID)
+        
+        threading.Thread(target=delayed_switch).start()
         
     except Exception as e:
         print(f">>> 選擇章節錯誤: {e}")
