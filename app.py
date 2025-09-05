@@ -253,15 +253,48 @@ def handle_message(event):
                     messages=[TextMessage(text=help_text)]
                 )
             )
+        elif '測試章節' in text:
+            # 新增：測試章節功能
+            print(f">>> 收到測試章節指令來自: {user_id}")
+            handle_test_chapter_menu(user_id, event.reply_token, line_api)
         else:
             line_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[TextMessage(text="請使用下方選單操作\n\n或輸入：\n• 「進度」查看學習進度\n• 「幫助」查看使用說明")]
+                    messages=[TextMessage(text="請使用下方選單操作\n\n或輸入：\n• 「進度」查看學習進度\n• 「幫助」查看使用說明\n• 「測試章節」測試章節選單")]
                 )
             )
     except Exception as e:
         print(f">>> 處理文字訊息錯誤: {e}")
+
+def handle_test_chapter_menu(user_id, reply_token, line_api):
+    """處理測試章節選單功能"""
+    try:
+        print(f">>> 開始切換章節選單 for {user_id}")
+        
+        # 強制切換到章節圖文選單
+        success = switch_rich_menu(user_id, CHAPTER_RICH_MENU_ID)
+        
+        if success:
+            response_text = "✅ 章節圖文選單切換成功！\n\n現在您可以使用：\n📚 閱讀內容\n⏯️ 上次進度\n📝 本章測驗\n🔖 我的書籤\n📊 錯誤分析\n🏠 主選單\n\n請先選擇一個章節開始學習"
+        else:
+            response_text = "❌ 圖文選單切換失敗\n\n請檢查環境設定"
+        
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=response_text)]
+            )
+        )
+        
+    except Exception as e:
+        print(f">>> 測試章節選單錯誤: {e}")
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text="測試失敗，請檢查系統設定")]
+            )
+        )
 
 def handle_progress_inquiry(user_id, reply_token, line_api):
     """處理進度查詢"""
@@ -338,8 +371,16 @@ def handle_postback(event):
         return
     
     try:
+        # 先檢查是否為純數字（直接章節選擇）
+        if data.isdigit():
+            chapter_number = int(data)
+            print(f">>> 偵測到純數字章節選擇: 第 {chapter_number} 章")
+            handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_api)
+            return
+        
         params = parse_qs(data)
         action = params.get('action', [None])[0]
+        print(f">>> 解析的動作: {action}")
         
         if action == 'switch_to_main_menu':
             switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
@@ -668,289 +709,3 @@ def handle_bookmarks(user_id, reply_token, line_api):
                 ch_id, sec_id = bm['chapter_id'], bm['section_id']
                 quick_reply_items.append(
                     QuickReplyItem(
-                        action=PostbackAction(
-                            label=f"CH{ch_id}-{sec_id}",
-                            display_text=f"跳至 CH{ch_id}-{sec_id}",
-                            data=f"action=navigate&chapter_id={ch_id}&section_id={sec_id}"
-                        )
-                    )
-                )
-            
-            line_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TextMessage(
-                        text=f"您有 {len(bookmarks)} 個書籤\n\n點擊下方快速跳轉",
-                        quick_reply=QuickReply(items=quick_reply_items)
-                    )]
-                )
-            )
-            
-    except Exception as e:
-        print(f">>> 書籤錯誤: {e}")
-
-def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
-    """處理內容導覽 - 增強版"""
-    try:
-        # 更新進度
-        conn = get_db_connection()
-        conn.execute(
-            "UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?",
-            (chapter_id, section_id, user_id)
-        )
-        conn.commit()
-        conn.close()
-        
-        print(f">>> 收到來自 {user_id} 的 Postback: action=navigate")
-        
-        # 找章節和段落
-        chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
-        if not chapter:
-            line_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TextMessage(text=f"找不到第 {chapter_id} 章")]
-                )
-            )
-            return
-            
-        section = next((s for s in chapter['sections'] if s['section_id'] == section_id), None)
-        messages = []
-        
-        # 章節圖片（第一段時）
-        if section_id == 1 and chapter.get('image_url'):
-            messages.append(ImageMessage(
-                original_content_url=chapter['image_url'],
-                preview_image_url=chapter['image_url']
-            ))
-        
-        if not section:
-            # 章節結束
-            # 章節結束
-            template = ButtonsTemplate(
-                title="章節完成",
-                text=f"完成 {chapter['title'][:30]}\n\n恭喜！您已完成本章節",
-                actions=[
-                    PostbackAction(label="回主選單", data="action=switch_to_main_menu"),
-                    PostbackAction(label="查看分析", data="action=view_analytics")
-                ]
-            )
-            messages.append(TemplateMessage(alt_text="章節完成", template=template))
-            
-        elif section['type'] == 'content':
-            # 內容段落 - 使用 QuickReply 取代 ButtonTemplate，避免遮擋內容
-            content = section['content']
-            if len(content) > 1000:
-                content = content[:1000] + "\n\n...(內容較長，請點擊下一段繼續)"
-                
-            messages.append(TextMessage(text=content))
-            
-            # 使用 QuickReply 取代 ButtonTemplate，避免遮擋內容
-            quick_items = []
-            
-            if section_id > 1:
-                quick_items.append(
-                    QuickReplyItem(
-                        action=PostbackAction(
-                            label="⬅️ 上一段",
-                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id-1}"
-                        )
-                    )
-                )
-            
-            if any(s['section_id'] == section_id + 1 for s in chapter['sections']):
-                quick_items.append(
-                    QuickReplyItem(
-                        action=PostbackAction(
-                            label="➡️ 下一段",
-                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id+1}"
-                        )
-                    )
-                )
-                
-            quick_items.extend([
-                QuickReplyItem(
-                    action=PostbackAction(
-                        label="🔖 標記",
-                        data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"
-                    )
-                ),
-                QuickReplyItem(
-                    action=PostbackAction(
-                        label="🏠 主選單",
-                        data="action=switch_to_main_menu"
-                    )
-                )
-            ])
-            
-            # 顯示進度資訊
-            content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
-            current_pos = next((i+1 for i, s in enumerate(content_sections) if s['section_id'] == section_id), 1)
-            progress_text = f"📖 第 {current_pos}/{len(content_sections)} 段"
-            
-            # 使用簡潔的文字訊息 + QuickReply
-            messages.append(TextMessage(
-                text=progress_text,
-                quick_reply=QuickReply(items=quick_items)
-            ))
-            
-        elif section['type'] == 'quiz':
-            # 測驗題
-            quiz = section['content']
-            quick_items = []
-            
-            for key, text in quiz['options'].items():
-                label = f"{key}. {text}"
-                if len(label) > 20:
-                    label = label[:17] + "..."
-                    
-                quick_items.append(
-                    QuickReplyItem(
-                        action=PostbackAction(
-                            label=label,
-                            display_text=f"選 {key}",
-                            data=f"action=submit_answer&chapter_id={chapter_id}&section_id={section_id}&answer={key}"
-                        )
-                    )
-                )
-            
-            # 顯示測驗進度
-            quiz_sections = [s for s in chapter['sections'] if s['type'] == 'quiz']
-            current_quiz = next((i+1 for i, s in enumerate(quiz_sections) if s['section_id'] == section_id), 1)
-            
-            quiz_text = f"測驗 {current_quiz}/{len(quiz_sections)}\n\n{quiz['question']}"
-            
-            messages.append(TextMessage(
-                text=quiz_text,
-                quick_reply=QuickReply(items=quick_items)
-            ))
-        
-        line_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=messages[:5]  # LINE 限制最多5個訊息
-            )
-        )
-        
-    except Exception as e:
-        print(f">>> 導覽錯誤: {e}")
-        line_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text="載入內容失敗，請稍後再試")]
-            )
-        )
-
-def handle_add_bookmark(params, user_id, reply_token, line_api):
-    """新增書籤"""
-    try:
-        chapter_id = int(params.get('chapter_id', [1])[0])
-        section_id = int(params.get('section_id', [1])[0])
-        
-        conn = get_db_connection()
-        existing = conn.execute(
-            "SELECT id FROM bookmarks WHERE line_user_id = ? AND chapter_id = ? AND section_id = ?",
-            (user_id, chapter_id, section_id)
-        ).fetchone()
-        
-        if existing:
-            text = "此段已在書籤中\n\n可輸入「書籤」查看所有收藏"
-        else:
-            conn.execute(
-                "INSERT INTO bookmarks (line_user_id, chapter_id, section_id) VALUES (?, ?, ?)",
-                (user_id, chapter_id, section_id)
-            )
-            conn.commit()
-            text = f"已加入書籤\n\n第 {chapter_id} 章第 {section_id} 段"
-            
-        conn.close()
-        line_api.reply_message(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
-        )
-        
-    except Exception as e:
-        print(f">>> 書籤錯誤: {e}")
-
-def handle_answer(params, user_id, reply_token, line_api):
-    """處理答題 - 增強版"""
-    try:
-        chapter_id = int(params.get('chapter_id', [1])[0])
-        section_id = int(params.get('section_id', [1])[0])
-        user_answer = params.get('answer', [None])[0]
-        
-        # 找正確答案
-        chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
-        section = next((s for s in chapter['sections'] if s['section_id'] == section_id), None)
-        
-        if section and section['type'] == 'quiz':
-            correct = section['content']['answer']
-            is_correct = user_answer == correct
-            
-            # 記錄答題
-            conn = get_db_connection()
-            conn.execute(
-                "INSERT INTO quiz_attempts (line_user_id, chapter_id, section_id, user_answer, is_correct) VALUES (?, ?, ?, ?, ?)",
-                (user_id, chapter_id, section_id, user_answer, is_correct)
-            )
-            conn.commit()
-            conn.close()
-            
-            # 建立結果訊息
-            if is_correct:
-                result_text = "✅ 答對了！"
-                emoji = "🎉"
-            else:
-                correct_option = section['content']['options'].get(correct, correct)
-                result_text = f"❌ 答錯了\n\n正確答案是 {correct}: {correct_option}"
-                emoji = "💪"
-            
-            actions = []
-            
-            # 檢查下一題
-            next_section_id = section_id + 1
-            next_section = next((s for s in chapter['sections'] if s['section_id'] == next_section_id), None)
-            
-            if next_section:
-                if next_section['type'] == 'quiz':
-                    actions.append(PostbackAction(
-                        label="下一題",
-                        data=f"action=navigate&chapter_id={chapter_id}&section_id={next_section_id}"
-                    ))
-                else:
-                    actions.append(PostbackAction(
-                        label="繼續閱讀",
-                        data=f"action=navigate&chapter_id={chapter_id}&section_id={next_section_id}"
-                    ))
-            
-            actions.extend([
-                PostbackAction(label="查看分析", data="action=view_analytics"),
-                PostbackAction(label="回主選單", data="action=switch_to_main_menu")
-            ])
-            
-            template = ButtonsTemplate(
-                title=f"作答結果 {emoji}",
-                text=result_text,
-                actions=actions[:4]  # 最多4個按鈕
-            )
-            
-            line_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TemplateMessage(alt_text="結果", template=template)]
-                )
-            )
-        
-    except Exception as e:
-        print(f">>> 答題錯誤: {e}")
-        line_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text="答題處理失敗，請稍後再試")]
-            )
-        )
-
-if __name__ == "__main__":
-    print(">>> LINE Bot 啟動")
-    print(f">>> 載入 {len(book_data.get('chapters', []))} 章節")
-    print(">>> 用戶體驗優化版本 v2.0")
-    app.run(host='0.0.0.0', port=8080, debug=False)
