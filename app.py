@@ -680,7 +680,7 @@ def handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_a
         )
         
         # 立即切換到章節功能選單，不使用延遲
-        switch_success = switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
+        switch_success = switch_rich_menu(user_id, CHAPTER_RICH_MENU_ID)
         if switch_success:
             print(f">>> 成功為使用者 {user_id} 切換到章節功能選單")
         else:
