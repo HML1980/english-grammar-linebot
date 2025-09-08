@@ -112,14 +112,27 @@ def is_duplicate_action(user_id, action_data, cooldown=2):
         print(f">>> 檢查重複操作錯誤: {e}")
         return False
 
-# --- 環境變數 ---
-CHANNEL_SECRET = os.environ.get('161e72c092551ea4b27b284d04b23083')
-CHANNEL_ACCESS_TOKEN = os.environ.get('5BvBNjyt6NrqujdHjczXYOSYvbF/WQIbhzsnrJKzcHqBoc2n12y34Ccc5IzOWRsKe/zqRtZuSprwjBlYR9PcPbO2PH/s8ZVsaBNMIXrU7GyAqpDSTrWaGbQbdg8vBd27ynXcqOKT8UfSC4r1gBwynwdB04t89/1O/w1cDnyilFU=')
-MAIN_RICH_MENU_ID = os.environ.get('richmenu-41b3077662217b0a11b8ced9ec0eb404')
+# --- 環境變數 (修正版) ---
+CHANNEL_SECRET = os.environ.get('CHANNEL_SECRET')
+CHANNEL_ACCESS_TOKEN = os.environ.get('CHANNEL_ACCESS_TOKEN')
+MAIN_RICH_MENU_ID = os.environ.get('MAIN_RICH_MENU_ID')
+
+# 調試：顯示環境變數狀態
+print(">>> 環境變數檢查:")
+print(f"CHANNEL_SECRET: {'已設定' if CHANNEL_SECRET else '未設定'}")
+print(f"CHANNEL_ACCESS_TOKEN: {'已設定' if CHANNEL_ACCESS_TOKEN else '未設定'}")
+print(f"MAIN_RICH_MENU_ID: {'已設定' if MAIN_RICH_MENU_ID else '未設定'}")
 
 required_env_vars = [CHANNEL_SECRET, CHANNEL_ACCESS_TOKEN, MAIN_RICH_MENU_ID]
 if not all(required_env_vars):
     print("錯誤：缺少必要的環境變數")
+    print("請在 Render 中設定以下環境變數:")
+    if not CHANNEL_SECRET:
+        print("- CHANNEL_SECRET")
+    if not CHANNEL_ACCESS_TOKEN:
+        print("- CHANNEL_ACCESS_TOKEN")
+    if not MAIN_RICH_MENU_ID:
+        print("- MAIN_RICH_MENU_ID")
     exit(1)
 
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
@@ -240,7 +253,7 @@ def handle_message(event):
         else:
             line_api.reply_message(
                 ReplyMessageRequest(
-                    reply_token=reply_token,
+                    reply_token=event.reply_token,
                     messages=[TextMessage(text="請使用下方圖文選單操作\n\n或輸入「進度」查看學習進度\n輸入「幫助」查看使用說明")]
                 )
             )
