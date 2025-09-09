@@ -404,21 +404,39 @@ def handle_postback(event):
             pass
 
 def handle_start_reading(user_id, reply_token, line_api):
-    """閱讀內容：從第一章第一段開始"""
+    """閱讀內容：從第一章開始（如果有圖片先顯示圖片）"""
     try:
-        # 更新使用者進度到第一章第一段
+        chapter = next((ch for ch in book_data['chapters'] if ch['chapter_id'] == 1), None)
+        if not chapter:
+            line_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=reply_token,
+                    messages=[TextMessage(text="第一章尚未開放")]
+                )
+            )
+            return
+        
+        # 如果第一章有圖片，從圖片開始（虛擬section_id = 0）
+        if chapter.get('image_url'):
+            start_section_id = 0  # 圖片段落
+        else:
+            # 否則從第一個內容段落開始
+            content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
+            start_section_id = content_sections[0]['section_id'] if content_sections else 1
+        
+        # 更新使用者進度
         conn = get_db_connection()
         conn.execute(
-            "UPDATE users SET current_chapter_id = 1, current_section_id = 1 WHERE line_user_id = ?", 
-            (user_id,)
+            "UPDATE users SET current_chapter_id = 1, current_section_id = ? WHERE line_user_id = ?", 
+            (start_section_id, user_id)
         )
         conn.commit()
         conn.close()
         
-        print(f">>> 使用者 {user_id} 開始閱讀第一章")
+        print(f">>> 使用者 {user_id} 開始閱讀第一章，起始段落: {start_section_id}")
         
-        # 直接導航到第一章第一段
-        handle_navigation(user_id, 1, 1, reply_token, line_api)
+        # 導航到起始位置
+        handle_navigation(user_id, 1, start_section_id, reply_token, line_api)
         
     except Exception as e:
         print(f">>> 開始閱讀錯誤: {e}")
@@ -495,19 +513,26 @@ def handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_a
             )
             return
         
-        # 更新使用者當前章節，但不更新段落（保持在該章節的開始）
+        # 決定起始段落：如果有圖片從圖片開始，否則從第一個內容段落
+        if chapter.get('image_url'):
+            start_section_id = 0  # 圖片段落
+        else:
+            content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
+            start_section_id = content_sections[0]['section_id'] if content_sections else 1
+        
+        # 更新使用者當前章節和段落
         conn = get_db_connection()
         conn.execute(
-            "UPDATE users SET current_chapter_id = ?, current_section_id = 1 WHERE line_user_id = ?", 
-            (chapter_number, user_id)
+            "UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?", 
+            (chapter_number, start_section_id, user_id)
         )
         conn.commit()
         conn.close()
         
-        print(f">>> 使用者 {user_id} 選擇第 {chapter_number} 章")
+        print(f">>> 使用者 {user_id} 選擇第 {chapter_number} 章，起始段落: {start_section_id}")
         
-        # 顯示章節資訊並開始閱讀第一段
-        handle_navigation(user_id, chapter_number, 1, reply_token, line_api)
+        # 導航到起始位置
+        handle_navigation(user_id, chapter_number, start_section_id, reply_token, line_api)
         
     except Exception as e:
         print(f">>> 章節選擇錯誤: {e}")
@@ -530,7 +555,7 @@ def handle_resume_reading(user_id, reply_token, line_api):
         
         if user and user['current_chapter_id']:
             chapter_id = user['current_chapter_id']
-            section_id = user['current_section_id'] or 1
+            section_id = user['current_section_id'] or 0
             
             print(f">>> 繼續閱讀: CH {chapter_id}, SEC {section_id}")
             handle_navigation(user_id, chapter_id, section_id, reply_token, line_api)
@@ -694,10 +719,9 @@ def handle_error_analytics(user_id, reply_token, line_api):
         )
 
 def handle_bookmarks(user_id, reply_token, line_api):
-    """我的書籤：查看標記內容 - 修正版"""
+    """我的書籤：查看標記內容"""
     try:
         conn = get_db_connection()
-        # 修正：移除不存在的 created_at 欄位
         bookmarks = conn.execute(
             """SELECT chapter_id, section_id
                FROM bookmarks
@@ -757,7 +781,7 @@ def handle_bookmarks(user_id, reply_token, line_api):
         )
 
 def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
-    """處理內容導覽 - 支援圖片作為第一段"""
+    """處理內容導覽 - 修正圖片段落邏輯"""
     try:
         # 更新使用者進度
         conn = get_db_connection()
@@ -768,7 +792,7 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
         conn.commit()
         conn.close()
         
-        # 找章節和段落
+        # 找章節
         chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
         if not chapter:
             line_api.reply_message(
@@ -778,154 +802,192 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
                 )
             )
             return
-            
-        section = next((s for s in chapter['sections'] if s['section_id'] == section_id), None)
+        
+        # 獲取章節的所有內容段落（排序）
+        content_sections = sorted([s for s in chapter['sections'] if s['type'] == 'content'], 
+                                key=lambda x: x['section_id'])
+        has_chapter_image = bool(chapter.get('image_url'))
+        
         messages = []
         
-        # 如果是第一段且有章節圖片，圖片視為第一段
-        if section_id == 1 and chapter.get('image_url'):
+        # section_id = 0 表示顯示章節圖片
+        if section_id == 0 and has_chapter_image:
             messages.append(ImageMessage(
                 original_content_url=chapter['image_url'],
                 preview_image_url=chapter['image_url']
             ))
             
-            # 為圖片段落建立導航按鈕（圖片是第一段，下面只有下一段和標記）
+            # 建立導航按鈕
             quick_items = []
             
-            # 檢查是否有下一段
-            if any(s['section_id'] == section_id + 1 for s in chapter['sections']):
+            # 下一段按鈕：跳到第一個文字內容段落
+            if content_sections:
+                next_section_id = content_sections[0]['section_id']
                 quick_items.append(
                     QuickReplyItem(
                         action=PostbackAction(
                             label="➡️ 下一段",
-                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id+1}"
+                            data=f"action=navigate&chapter_id={chapter_id}&section_id={next_section_id}"
                         )
                     )
                 )
             
-            # 標記按鈕
+            # 標記按鈕（標記圖片段落為 section_id=0）
             quick_items.append(
                 QuickReplyItem(
                     action=PostbackAction(
                         label="🔖 標記",
-                        data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"
+                        data=f"action=add_bookmark&chapter_id={chapter_id}&section_id=0"
                     )
                 )
             )
             
             # 顯示章節標題和進度
-            content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
-            progress_text = f"📖 {chapter['title']}\n\n第 1/{len(content_sections) + 1} 段 (章節圖片)"
+            total_content = len(content_sections) + 1  # +1 for image
+            progress_text = f"📖 {chapter['title']}\n\n第 1/{total_content} 段 (章節圖片)"
             
             messages.append(TextMessage(
                 text=progress_text,
                 quick_reply=QuickReply(items=quick_items)
             ))
         
-        elif not section:
-            # 章節結束
-            content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
-            completed_content = len(content_sections) + (1 if chapter.get('image_url') else 0)  # +1 for image
+        else:
+            # 查找當前段落
+            section = next((s for s in chapter['sections'] if s['section_id'] == section_id), None)
             
-            template = ButtonsTemplate(
-                title="🎉 章節完成",
-                text=f"完成 {chapter['title']}\n\n已閱讀 {completed_content} 段內容\n恭喜完成本章節！",
-                actions=[
-                    PostbackAction(label="📊 查看分析", data="action=view_analytics"),
-                    PostbackAction(label="📖 選擇章節", data="action=show_chapter_menu")
-                ]
-            )
-            messages.append(TemplateMessage(alt_text="章節完成", template=template))
-            
-        elif section['type'] == 'content':
-            # 一般內容段落
-            content = section['content']
-            if len(content) > 1000:
-                content = content[:1000] + "\n\n...(內容較長，請點擊下一段繼續)"
+            if not section:
+                # 章節結束
+                total_content = len(content_sections) + (1 if has_chapter_image else 0)
                 
-            messages.append(TextMessage(text=content))
-            
-            # 建立導航按鈕
-            quick_items = []
-            
-            # 上一段按鈕（如果不是第一段）
-            if section_id > 1:
-                quick_items.append(
-                    QuickReplyItem(
-                        action=PostbackAction(
-                            label="⬅️ 上一段",
-                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id-1}"
-                        )
-                    )
+                template = ButtonsTemplate(
+                    title="🎉 章節完成",
+                    text=f"完成 {chapter['title']}\n\n已閱讀 {total_content} 段內容\n恭喜完成本章節！",
+                    actions=[
+                        PostbackAction(label="📊 查看分析", data="action=view_analytics"),
+                        PostbackAction(label="📖 選擇章節", data="action=show_chapter_menu")
+                    ]
                 )
-            
-            # 下一段按鈕（如果有下一段）
-            if any(s['section_id'] == section_id + 1 for s in chapter['sections']):
-                quick_items.append(
-                    QuickReplyItem(
-                        action=PostbackAction(
-                            label="➡️ 下一段",
-                            data=f"action=navigate&chapter_id={chapter_id}&section_id={section_id+1}"
-                        )
-                    )
-                )
-            
-            # 標記按鈕
-            quick_items.append(
-                QuickReplyItem(
-                    action=PostbackAction(
-                        label="🔖 標記",
-                        data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"
-                    )
-                )
-            )
-            
-            # 計算進度（包含圖片段落）
-            content_sections = [s for s in chapter['sections'] if s['type'] == 'content']
-            current_pos = next((i+1 for i, s in enumerate(content_sections) if s['section_id'] == section_id), 1)
-            if chapter.get('image_url'):
-                current_pos += 1  # 圖片算一段
-                total_content = len(content_sections) + 1
-            else:
-                total_content = len(content_sections)
-            
-            progress_text = f"📖 第 {current_pos}/{total_content} 段"
-            
-            messages.append(TextMessage(
-                text=progress_text,
-                quick_reply=QuickReply(items=quick_items)
-            ))
-            
-        elif section['type'] == 'quiz':
-            # 測驗題目
-            quiz = section['content']
-            quick_items = []
-            
-            for key, text in quiz['options'].items():
-                label = f"{key}. {text}"
-                if len(label) > 20:
-                    label = label[:17] + "..."
+                messages.append(TemplateMessage(alt_text="章節完成", template=template))
+                
+            elif section['type'] == 'content':
+                # 一般內容段落
+                content = section['content']
+                if len(content) > 1000:
+                    content = content[:1000] + "\n\n...(內容較長，請點擊下一段繼續)"
                     
+                messages.append(TextMessage(text=content))
+                
+                # 建立導航按鈕
+                quick_items = []
+                
+                # 找到當前段落在內容段落中的位置
+                current_index = next((i for i, s in enumerate(content_sections) if s['section_id'] == section_id), -1)
+                
+                # 上一段按鈕
+                if current_index > 0:
+                    # 有前一個文字段落
+                    prev_section_id = content_sections[current_index - 1]['section_id']
+                    quick_items.append(
+                        QuickReplyItem(
+                            action=PostbackAction(
+                                label="⬅️ 上一段",
+                                data=f"action=navigate&chapter_id={chapter_id}&section_id={prev_section_id}"
+                            )
+                        )
+                    )
+                elif has_chapter_image:
+                    # 回到章節圖片（section_id=0）
+                    quick_items.append(
+                        QuickReplyItem(
+                            action=PostbackAction(
+                                label="⬅️ 上一段",
+                                data=f"action=navigate&chapter_id={chapter_id}&section_id=0"
+                            )
+                        )
+                    )
+                
+                # 下一段按鈕
+                if current_index < len(content_sections) - 1:
+                    # 有下一個文字段落
+                    next_section_id = content_sections[current_index + 1]['section_id']
+                    quick_items.append(
+                        QuickReplyItem(
+                            action=PostbackAction(
+                                label="➡️ 下一段",
+                                data=f"action=navigate&chapter_id={chapter_id}&section_id={next_section_id}"
+                            )
+                        )
+                    )
+                else:
+                    # 檢查是否有測驗題
+                    quiz_sections = [s for s in chapter['sections'] if s['type'] == 'quiz']
+                    if quiz_sections:
+                        first_quiz_id = min(quiz_sections, key=lambda x: x['section_id'])['section_id']
+                        quick_items.append(
+                            QuickReplyItem(
+                                action=PostbackAction(
+                                    label="📝 開始測驗",
+                                    data=f"action=navigate&chapter_id={chapter_id}&section_id={first_quiz_id}"
+                                )
+                            )
+                        )
+                
+                # 標記按鈕
                 quick_items.append(
                     QuickReplyItem(
                         action=PostbackAction(
-                            label=label,
-                            display_text=f"選 {key}",
-                            data=f"action=submit_answer&chapter_id={chapter_id}&section_id={section_id}&answer={key}"
+                            label="🔖 標記",
+                            data=f"action=add_bookmark&chapter_id={chapter_id}&section_id={section_id}"
                         )
                     )
                 )
-            
-            # 計算測驗進度
-            quiz_sections = [s for s in chapter['sections'] if s['type'] == 'quiz']
-            current_quiz = next((i+1 for i, s in enumerate(quiz_sections) if s['section_id'] == section_id), 1)
-            
-            quiz_text = f"📝 測驗 {current_quiz}/{len(quiz_sections)}\n\n{quiz['question']}"
-            
-            messages.append(TextMessage(
-                text=quiz_text,
-                quick_reply=QuickReply(items=quick_items)
-            ))
+                
+                # 計算進度（考慮圖片段落）
+                content_position = current_index + 1  # 在內容段落中的位置
+                if has_chapter_image:
+                    display_position = content_position + 1  # 圖片算第一段
+                    total_content = len(content_sections) + 1
+                else:
+                    display_position = content_position
+                    total_content = len(content_sections)
+                
+                progress_text = f"📖 第 {display_position}/{total_content} 段"
+                
+                messages.append(TextMessage(
+                    text=progress_text,
+                    quick_reply=QuickReply(items=quick_items)
+                ))
+                
+            elif section['type'] == 'quiz':
+                # 測驗題目
+                quiz = section['content']
+                quick_items = []
+                
+                for key, text in quiz['options'].items():
+                    label = f"{key}. {text}"
+                    if len(label) > 20:
+                        label = label[:17] + "..."
+                        
+                    quick_items.append(
+                        QuickReplyItem(
+                            action=PostbackAction(
+                                label=label,
+                                display_text=f"選 {key}",
+                                data=f"action=submit_answer&chapter_id={chapter_id}&section_id={section_id}&answer={key}"
+                            )
+                        )
+                    )
+                
+                # 計算測驗進度
+                quiz_sections = [s for s in chapter['sections'] if s['type'] == 'quiz']
+                current_quiz = next((i+1 for i, s in enumerate(quiz_sections) if s['section_id'] == section_id), 1)
+                
+                quiz_text = f"📝 測驗 {current_quiz}/{len(quiz_sections)}\n\n{quiz['question']}"
+                
+                messages.append(TextMessage(
+                    text=quiz_text,
+                    quick_reply=QuickReply(items=quick_items)
+                ))
         
         line_api.reply_message(
             ReplyMessageRequest(
@@ -956,14 +1018,20 @@ def handle_add_bookmark(params, user_id, reply_token, line_api):
         ).fetchone()
         
         if existing:
-            text = "📌 此段已在書籤中\n\n點擊「我的書籤」查看所有收藏"
+            if section_id == 0:
+                text = "📌 章節圖片已在書籤中\n\n點擊「我的書籤」查看所有收藏"
+            else:
+                text = "📌 此段已在書籤中\n\n點擊「我的書籤」查看所有收藏"
         else:
             conn.execute(
                 "INSERT INTO bookmarks (line_user_id, chapter_id, section_id) VALUES (?, ?, ?)",
                 (user_id, chapter_id, section_id)
             )
             conn.commit()
-            text = f"✅ 已加入書籤\n\n第 {chapter_id} 章第 {section_id} 段"
+            if section_id == 0:
+                text = f"✅ 已加入書籤\n\n第 {chapter_id} 章圖片"
+            else:
+                text = f"✅ 已加入書籤\n\n第 {chapter_id} 章第 {section_id} 段"
             
         conn.close()
         line_api.reply_message(
@@ -1054,5 +1122,5 @@ def handle_answer(params, user_id, reply_token, line_api):
 if __name__ == "__main__":
     print(">>> LINE Bot 啟動")
     print(f">>> 載入 {len(book_data.get('chapters', []))} 章節")
-    print(">>> 五分鐘英文文法攻略 - 統一圖文選單版本 v2.0")
+    print(">>> 五分鐘英文文法攻略 - 修正版 v3.0")
     app.run(host='0.0.0.0', port=8080, debug=False)
