@@ -1,6 +1,5 @@
 from dotenv import load_dotenv
 load_dotenv()
-
 # -*- coding: utf-8 -*-
 import os
 import json
@@ -37,6 +36,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# 基本日誌設定
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('linebot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ===== 步驟 2：環境變數檢查（加強版）=====

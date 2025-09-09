@@ -1,6 +1,3 @@
-from dotenv import load_dotenv
-load_dotenv()
-
 # -*- coding: utf-8 -*-
 import os
 import json
