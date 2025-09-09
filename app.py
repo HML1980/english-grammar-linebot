@@ -112,7 +112,7 @@ def is_duplicate_action(user_id, action_data, cooldown=2):
         print(f">>> 檢查重複操作錯誤: {e}")
         return False
 
-# --- 環境變數 (修正版) ---
+# --- 環境變數 ---
 CHANNEL_SECRET = os.environ.get('CHANNEL_SECRET')
 CHANNEL_ACCESS_TOKEN = os.environ.get('CHANNEL_ACCESS_TOKEN')
 MAIN_RICH_MENU_ID = os.environ.get('MAIN_RICH_MENU_ID')
@@ -694,14 +694,15 @@ def handle_error_analytics(user_id, reply_token, line_api):
         )
 
 def handle_bookmarks(user_id, reply_token, line_api):
-    """我的書籤：查看標記內容"""
+    """我的書籤：查看標記內容 - 修正版"""
     try:
         conn = get_db_connection()
+        # 修正：移除不存在的 created_at 欄位
         bookmarks = conn.execute(
-            """SELECT b.chapter_id, b.section_id, b.created_at
-               FROM bookmarks b
-               WHERE b.line_user_id = ?
-               ORDER BY b.chapter_id, b.section_id""", 
+            """SELECT chapter_id, section_id
+               FROM bookmarks
+               WHERE line_user_id = ?
+               ORDER BY chapter_id, section_id""", 
             (user_id,)
         ).fetchall()
         conn.close()
