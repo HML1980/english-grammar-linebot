@@ -24,6 +24,20 @@ DATABASE_NAME = 'linebot.db'
 
 def init_database():
     """初始化資料庫表格"""
+    # 如果是生產環境且有結構問題，重新建立資料庫
+    import os
+    if os.environ.get('RENDER'):
+        try:
+            # 測試現有資料庫結構
+            test_conn = sqlite3.connect(DATABASE_NAME)
+            test_conn.execute("SELECT action_data FROM user_actions LIMIT 1")
+            test_conn.close()
+        except:
+            # 資料庫結構有問題，刪除重建
+            if os.path.exists(DATABASE_NAME):
+                os.remove(DATABASE_NAME)
+                print(">>> 資料庫結構修復：重新建立")
+    
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
     
