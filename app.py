@@ -1,3 +1,5 @@
+import threading
+from contextlib import contextmanager
 # -*- coding: utf-8 -*-
 import os
 import json
@@ -16,6 +18,48 @@ from linebot.v3.messaging import (
     QuickReply, QuickReplyItem
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, PostbackEvent, FollowEvent
+
+import sqlite3
+import time
+import threading
+from contextlib import contextmanager
+
+# 全局資料庫鎖
+db_lock = threading.Lock()
+
+DATABASE_NAME = 'linebot.db'
+
+@contextmanager
+def get_db_connection_safe():
+    """安全的資料庫連接管理器"""
+    conn = None
+    retries = 3
+    
+    for attempt in range(retries):
+        try:
+            with db_lock:
+                conn = sqlite3.connect(DATABASE_NAME, timeout=30.0)
+                conn.row_factory = sqlite3.Row
+                conn.execute('PRAGMA journal_mode=WAL')
+                conn.execute('PRAGMA synchronous=NORMAL')
+                conn.execute('PRAGMA cache_size=10000')
+                conn.execute('PRAGMA temp_store=memory')
+                yield conn
+                return
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < retries - 1:
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            raise
+        except Exception as e:
+            raise
+        finally:
+            if conn:
+                try:
+                    conn.commit()
+                except:
+                    pass
+
 
 app = Flask(__name__)
 
@@ -71,20 +115,16 @@ def init_database():
     ''')
     
     conn.commit()
-    conn.close()
     print(">>> 資料庫初始化完成")
 
-def get_db_connection():
-    conn = sqlite3.connect(DATABASE_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+
 # --- 防重複點擊機制 ---
 def is_duplicate_action(user_id, action_data, cooldown=2):
     """檢查是否為重複操作"""
     current_time = time.time()
     
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         
         conn.execute(
             "DELETE FROM user_actions WHERE timestamp < ?", 
@@ -97,7 +137,6 @@ def is_duplicate_action(user_id, action_data, cooldown=2):
         ).fetchone()
         
         if recent_action:
-            conn.close()
             return True
         
         conn.execute(
@@ -105,7 +144,6 @@ def is_duplicate_action(user_id, action_data, cooldown=2):
             (user_id, action_data, current_time)
         )
         conn.commit()
-        conn.close()
         return False
         
     except Exception as e:
@@ -116,13 +154,11 @@ def is_duplicate_action(user_id, action_data, cooldown=2):
 def check_new_user_guidance(user_id):
     """檢查是否為新用戶，返回引導文字"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         action_count = conn.execute(
             "SELECT COUNT(*) FROM user_actions WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()[0]
-        conn.close()
-        
         if action_count < 5:  # 新用戶或操作較少的用戶
             return "\n\n🌟 小提示：輸入「1」快速開始第一章，「幫助」查看所有指令"
         return ""
@@ -362,7 +398,7 @@ def handle_help_message(user_id, reply_token, line_api):
 def handle_status_inquiry(user_id, reply_token, line_api):
     """處理狀態查詢"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         user = conn.execute(
             "SELECT current_chapter_id, current_section_id, display_name FROM users WHERE line_user_id = ?",
             (user_id,)
@@ -377,9 +413,6 @@ def handle_status_inquiry(user_id, reply_token, line_api):
             "SELECT COUNT(*) FROM quiz_attempts WHERE line_user_id = ?",
             (user_id,)
         ).fetchone()[0]
-        
-        conn.close()
-        
         if user:
             status_text = f"👤 {user['display_name'] or '學習者'}\n\n"
             if user['current_chapter_id']:
@@ -433,13 +466,11 @@ def handle_unknown_command(user_id, reply_token, line_api, original_text):
 def handle_quick_navigation(user_id, direction, reply_token, line_api):
     """處理快速導航 (上一段/下一段)"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         user = conn.execute(
             "SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()
-        conn.close()
-        
         if not user or not user['current_chapter_id']:
             line_api.reply_message(
                 ReplyMessageRequest(
@@ -529,14 +560,12 @@ def handle_follow(event):
         
         print(f">>> 新使用者: {display_name}")
         
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO users (line_user_id, display_name) VALUES (?, ?)", 
             (user_id, display_name)
         )
         conn.commit()
-        conn.close()
-        
         # 設定統一圖文選單
         switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
         
@@ -652,14 +681,12 @@ def handle_start_reading(user_id, reply_token, line_api):
             start_section_id = content_sections[0]['section_id'] if content_sections else 1
         
         # 更新使用者進度
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         conn.execute(
             "UPDATE users SET current_chapter_id = 1, current_section_id = ? WHERE line_user_id = ?", 
             (start_section_id, user_id)
         )
         conn.commit()
-        conn.close()
-        
         print(f">>> 使用者 {user_id} 開始閱讀第一章，起始段落: {start_section_id}")
         
         # 導航到起始位置
@@ -748,14 +775,12 @@ def handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_a
             start_section_id = content_sections[0]['section_id'] if content_sections else 1
         
         # 更新使用者當前章節和段落
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         conn.execute(
             "UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?", 
             (chapter_number, start_section_id, user_id)
         )
         conn.commit()
-        conn.close()
-        
         print(f">>> 使用者 {user_id} 選擇第 {chapter_number} 章，起始段落: {start_section_id}")
         
         # 導航到起始位置
@@ -773,13 +798,11 @@ def handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_a
 def handle_resume_reading(user_id, reply_token, line_api):
     """上次進度：跳到上次位置"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         user = conn.execute(
             "SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()
-        conn.close()
-        
         if user and user['current_chapter_id']:
             chapter_id = user['current_chapter_id']
             section_id = user['current_section_id'] or 0
@@ -799,13 +822,11 @@ def handle_resume_reading(user_id, reply_token, line_api):
 def handle_chapter_quiz(user_id, reply_token, line_api):
     """本章測驗題：需要先進入章節才能使用"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         user = conn.execute(
             "SELECT current_chapter_id FROM users WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()
-        conn.close()
-        
         if not user or not user['current_chapter_id']:
             line_api.reply_message(
                 ReplyMessageRequest(
@@ -837,7 +858,7 @@ def handle_chapter_quiz(user_id, reply_token, line_api):
 def handle_progress_inquiry(user_id, reply_token, line_api):
     """處理進度查詢"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         
         total_sections = sum(len(ch['sections']) for ch in book_data['chapters'])
         
@@ -877,9 +898,6 @@ def handle_progress_inquiry(user_id, reply_token, line_api):
             "SELECT COUNT(*) FROM bookmarks WHERE line_user_id = ?",
             (user_id,)
         ).fetchone()[0]
-        
-        conn.close()
-        
         progress_text = "📊 學習進度報告\n\n"
         if user and user['current_chapter_id']:
             progress_text += f"📍 目前位置：第 {user['current_chapter_id']} 章第 {user['current_section_id'] or 1} 段\n"
@@ -903,7 +921,7 @@ def handle_progress_inquiry(user_id, reply_token, line_api):
 def handle_error_analytics(user_id, reply_token, line_api):
     """錯誤分析：顯示答錯統計，錯誤多的排前面"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         
         # 計算總體統計
         total_attempts = conn.execute(
@@ -918,7 +936,6 @@ def handle_error_analytics(user_id, reply_token, line_api):
                     messages=[TextMessage(text="尚未有測驗記錄\n\n完成測驗後可以查看詳細的錯誤分析" + check_new_user_guidance(user_id))]
                 )
             )
-            conn.close()
             return
         
         correct_attempts = conn.execute(
@@ -943,9 +960,6 @@ def handle_error_analytics(user_id, reply_token, line_api):
                LIMIT 5""",
             (user_id,)
         ).fetchall()
-        
-        conn.close()
-        
         # 建立分析報告
         analysis_text = f"📊 錯誤分析報告\n\n"
         analysis_text += f"總答題次數：{total_attempts} 次\n"
@@ -1014,7 +1028,7 @@ def handle_error_analytics(user_id, reply_token, line_api):
 def handle_bookmarks(user_id, reply_token, line_api):
     """我的書籤：查看標記內容"""
     try:
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         bookmarks = conn.execute(
             """SELECT chapter_id, section_id
                FROM bookmarks
@@ -1022,8 +1036,6 @@ def handle_bookmarks(user_id, reply_token, line_api):
                ORDER BY chapter_id, section_id""", 
             (user_id,)
         ).fetchall()
-        conn.close()
-        
         if not bookmarks:
             line_api.reply_message(
                 ReplyMessageRequest(
@@ -1084,7 +1096,7 @@ def handle_add_bookmark(params, user_id, reply_token, line_api):
         chapter_id = int(params.get('chapter_id', [1])[0])
         section_id = int(params.get('section_id', [1])[0])
         
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         existing = conn.execute(
             "SELECT id FROM bookmarks WHERE line_user_id = ? AND chapter_id = ? AND section_id = ?",
             (user_id, chapter_id, section_id)
@@ -1105,8 +1117,6 @@ def handle_add_bookmark(params, user_id, reply_token, line_api):
                 text = f"✅ 已加入書籤\n\n第 {chapter_id} 章圖片"
             else:
                 text = f"✅ 已加入書籤\n\n第 {chapter_id} 章第 {section_id} 段"
-            
-        conn.close()
         line_api.reply_message(
             ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
         )
@@ -1129,14 +1139,12 @@ def handle_answer(params, user_id, reply_token, line_api):
             is_correct = user_answer == correct
             
             # 記錄答題
-            conn = get_db_connection()
+            with get_db_connection_safe() as conn:
             conn.execute(
                 "INSERT INTO quiz_attempts (line_user_id, chapter_id, section_id, user_answer, is_correct) VALUES (?, ?, ?, ?, ?)",
                 (user_id, chapter_id, section_id, user_answer, is_correct)
             )
             conn.commit()
-            conn.close()
-            
             # 建立結果訊息
             if is_correct:
                 result_text = "✅ 答對了！"
@@ -1196,14 +1204,12 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
     """處理內容導覽 - 修正圖片段落邏輯"""
     try:
         # 更新使用者進度
-        conn = get_db_connection()
+        with get_db_connection_safe() as conn:
         conn.execute(
             "UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?",
             (chapter_id, section_id, user_id)
         )
         conn.commit()
-        conn.close()
-        
         # 找章節
         chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
         if not chapter:
