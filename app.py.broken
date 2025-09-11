@@ -1,0 +1,257 @@
+# 備份當前版本
+cp app.py app.py.broken
+
+# 建立全新的乾淨版本
+cat > app.py << 'EOF'
+# -*- coding: utf-8 -*-
+import os
+import json
+import psycopg2
+import psycopg2.pool
+import psycopg2.extras
+import requests
+import time
+import re
+from urllib.parse import parse_qs
+from flask import Flask, request, abort
+from linebot.v3 import WebhookHandler
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.messaging import (
+    Configuration, ApiClient, MessagingApi,
+    ReplyMessageRequest, TextMessage, ImageMessage, PostbackAction,
+    TemplateMessage, ButtonsTemplate, CarouselTemplate, CarouselColumn,
+    QuickReply, QuickReplyItem
+)
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, PostbackEvent, FollowEvent
+
+app = Flask(__name__)
+
+DATABASE_URL = os.environ.get('DATABASE_URL')
+if not DATABASE_URL:
+    DATABASE_URL = 'postgresql://localhost/linebot'
+
+connection_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+
+def get_db_connection():
+    return connection_pool.getconn()
+
+def return_db_connection(conn):
+    connection_pool.putconn(conn)
+
+def init_database():
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                line_user_id TEXT UNIQUE NOT NULL,
+                display_name TEXT,
+                current_chapter_id INTEGER,
+                current_section_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id SERIAL PRIMARY KEY,
+                line_user_id TEXT NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                section_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(line_user_id, chapter_id, section_id)
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS quiz_attempts (
+                id SERIAL PRIMARY KEY,
+                line_user_id TEXT NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                section_id INTEGER NOT NULL,
+                user_answer TEXT NOT NULL,
+                is_correct BOOLEAN NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS user_actions (
+                id SERIAL PRIMARY KEY,
+                line_user_id TEXT NOT NULL,
+                action_data TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+        ''')
+        conn.commit()
+        print(">>> 資料庫初始化完成")
+    except Exception as e:
+        conn.rollback()
+        print(f">>> 資料庫初始化錯誤: {e}")
+    finally:
+        return_db_connection(conn)
+
+def is_duplicate_action(user_id, action_data, cooldown=2):
+    return False
+
+def check_new_user_guidance(user_id):
+    return ""
+
+CHANNEL_SECRET = os.environ.get('CHANNEL_SECRET')
+CHANNEL_ACCESS_TOKEN = os.environ.get('CHANNEL_ACCESS_TOKEN')
+MAIN_RICH_MENU_ID = os.environ.get('MAIN_RICH_MENU_ID')
+
+print(">>> 環境變數檢查:")
+print(f"CHANNEL_SECRET: {'已設定' if CHANNEL_SECRET else '未設定'}")
+print(f"CHANNEL_ACCESS_TOKEN: {'已設定' if CHANNEL_ACCESS_TOKEN else '未設定'}")
+print(f"MAIN_RICH_MENU_ID: {'已設定' if MAIN_RICH_MENU_ID else '未設定'}")
+
+required_env_vars = [CHANNEL_SECRET, CHANNEL_ACCESS_TOKEN, MAIN_RICH_MENU_ID]
+if not all(required_env_vars):
+    print("錯誤：缺少必要的環境變數")
+    exit(1)
+
+configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(CHANNEL_SECRET)
+
+def load_book_data():
+    try:
+        with open('book.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        print(">>> book.json 載入成功")
+        return data
+    except Exception as e:
+        print(f">>> 載入 book.json 失敗: {e}")
+        return {"chapters": []}
+
+book_data = load_book_data()
+init_database()
+
+def switch_rich_menu(user_id, rich_menu_id):
+    try:
+        headers = {'Authorization': f'Bearer {CHANNEL_ACCESS_TOKEN}'}
+        url = f'https://api.line.me/v2/bot/user/{user_id}/richmenu/{rich_menu_id}'
+        response = requests.post(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            print(f">>> 圖文選單切換成功: {rich_menu_id}")
+            return True
+        else:
+            print(f">>> 切換失敗: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f">>> 切換圖文選單錯誤: {e}")
+        return False
+
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    except Exception as e:
+        print(f">>> 處理錯誤: {e}")
+        abort(500)
+    return 'OK'
+
+@app.route("/health", methods=['GET'])
+def health_check():
+    return {"status": "healthy", "chapters": len(book_data.get('chapters', []))}
+
+@app.route("/", methods=['GET'])
+def index():
+    return {"message": "LINE Bot is running", "status": "healthy"}
+
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_message(event):
+    text = event.message.text.strip()
+    user_id = event.source.user_id
+    line_api = MessagingApi(ApiClient(configuration))
+    try:
+        if text == "1" or text == "閱讀內容":
+            handle_start_reading(user_id, event.reply_token, line_api)
+        else:
+            line_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="輸入「1」開始第一章")]
+                )
+            )
+    except Exception as e:
+        print(f">>> 處理文字訊息錯誤: {e}")
+
+@handler.add(FollowEvent)
+def handle_follow(event):
+    user_id = event.source.user_id
+    line_api = MessagingApi(ApiClient(configuration))
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO users (line_user_id, display_name) VALUES (%s, %s) ON CONFLICT (line_user_id) DO NOTHING", (user_id, "新用戶"))
+        conn.commit()
+        return_db_connection(conn)
+        switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
+        welcome_text = "歡迎使用五分鐘英文文法攻略！\n\n輸入「1」開始第一章"
+        line_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=welcome_text)]))
+    except Exception as e:
+        print(f">>> 處理關注事件錯誤: {e}")
+
+@handler.add(PostbackEvent)
+def handle_postback(event):
+    data = event.postback.data
+    reply_token = event.reply_token
+    user_id = event.source.user_id
+    line_api = MessagingApi(ApiClient(configuration))
+    print(f">>> 收到來自 {user_id} 的 Postback: {data}")
+    try:
+        if data.isdigit():
+            chapter_number = int(data)
+            handle_start_reading(user_id, reply_token, line_api)
+        else:
+            line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="功能開發中")]))
+    except Exception as e:
+        print(f">>> Postback 處理錯誤: {e}")
+
+def handle_start_reading(user_id, reply_token, line_api):
+    try:
+        chapter = next((ch for ch in book_data['chapters'] if ch['chapter_id'] == 1), None)
+        if not chapter:
+            line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="第一章尚未開放")]))
+            return
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET current_chapter_id = %s, current_section_id = %s WHERE line_user_id = %s", (1, 0, user_id))
+        conn.commit()
+        return_db_connection(conn)
+        
+        if chapter.get('image_url'):
+            line_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=reply_token,
+                    messages=[
+                        ImageMessage(original_content_url=chapter['image_url'], preview_image_url=chapter['image_url']),
+                        TextMessage(text=f"📖 {chapter['title']}\n\n第 1 段 (章節圖片)")
+                    ]
+                )
+            )
+        else:
+            line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="開始閱讀第一章")]))
+    except Exception as e:
+        print(f">>> 開始閱讀錯誤: {e}")
+        line_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="開始閱讀失敗，請稍後再試")]))
+
+if __name__ == "__main__":
+    print(">>> LINE Bot 啟動")
+    print(f">>> 載入 {len(book_data.get('chapters', []))} 章節")
+    print(">>> PostgreSQL版本 - 最小化測試版")
+    app.run(host='0.0.0.0', port=8080, debug=False)
+EOF
+
+# 檢查語法
+python -m py_compile app.py
+echo "語法檢查: $?"
+
+# 立即部署測試
+git add app.py
+git commit -m "Clean minimal version to test PostgreSQL connection"
+git push
