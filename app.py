@@ -24,20 +24,6 @@ DATABASE_NAME = 'linebot.db'
 
 def init_database():
     """初始化資料庫表格"""
-    # 如果是生產環境且有結構問題，重新建立資料庫
-    import os
-    if os.environ.get('RENDER'):
-        try:
-            # 測試現有資料庫結構
-            test_conn = sqlite3.connect(DATABASE_NAME)
-            test_conn.execute("SELECT action_data FROM user_actions LIMIT 1")
-            test_conn.close()
-        except:
-            # 資料庫結構有問題，刪除重建
-            if os.path.exists(DATABASE_NAME):
-                os.remove(DATABASE_NAME)
-                print(">>> 資料庫結構修復：重新建立")
-    
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
     
@@ -85,7 +71,11 @@ def init_database():
     ''')
     
     conn.commit()
-    conn.close()
+    except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
     print(">>> 資料庫初始化完成")
 
 def get_db_connection():
@@ -94,33 +84,8 @@ def get_db_connection():
     return conn
 # --- 防重複點擊機制 ---
 def is_duplicate_action(user_id, action_data, cooldown=2):
-    """檢查是否為重複操作"""
-    current_time = time.time()
-    
-    try:
-        conn = get_db_connection()
-        
-        conn.execute(
-            "DELETE FROM user_actions WHERE timestamp < ?", 
-            (current_time - cooldown * 2,)
-        )
-        
-        recent_action = conn.execute(
-            "SELECT timestamp FROM user_actions WHERE line_user_id = ? AND action_data = ? AND timestamp > ?",
-            (user_id, action_data, current_time - cooldown)
-        ).fetchone()
-        
-        if recent_action:
-            conn.close()
-            return True
-        
-        conn.execute(
-            "INSERT INTO user_actions (line_user_id, action_data, timestamp) VALUES (?, ?, ?)",
-            (user_id, action_data, current_time)
-        )
-        conn.commit()
-        conn.close()
-        return False
+    """簡化版本 - 避免資料庫問題"""
+    return False
         
     except Exception as e:
         print(f">>> 檢查重複操作錯誤: {e}")
@@ -130,12 +95,22 @@ def is_duplicate_action(user_id, action_data, cooldown=2):
 def check_new_user_guidance(user_id):
     """檢查是否為新用戶，返回引導文字"""
     try:
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         action_count = conn.execute(
             "SELECT COUNT(*) FROM user_actions WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()[0]
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         if action_count < 5:  # 新用戶或操作較少的用戶
             return "\n\n🌟 小提示：輸入「1」快速開始第一章，「幫助」查看所有指令"
@@ -376,7 +351,13 @@ def handle_help_message(user_id, reply_token, line_api):
 def handle_status_inquiry(user_id, reply_token, line_api):
     """處理狀態查詢"""
     try:
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         user = conn.execute(
             "SELECT current_chapter_id, current_section_id, display_name FROM users WHERE line_user_id = ?",
             (user_id,)
@@ -392,7 +373,11 @@ def handle_status_inquiry(user_id, reply_token, line_api):
             (user_id,)
         ).fetchone()[0]
         
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         if user:
             status_text = f"👤 {user['display_name'] or '學習者'}\n\n"
@@ -447,12 +432,22 @@ def handle_unknown_command(user_id, reply_token, line_api, original_text):
 def handle_quick_navigation(user_id, direction, reply_token, line_api):
     """處理快速導航 (上一段/下一段)"""
     try:
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         user = conn.execute(
             "SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         if not user or not user['current_chapter_id']:
             line_api.reply_message(
@@ -543,13 +538,23 @@ def handle_follow(event):
         
         print(f">>> 新使用者: {display_name}")
         
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         conn.execute(
             "INSERT OR IGNORE INTO users (line_user_id, display_name) VALUES (?, ?)", 
             (user_id, display_name)
         )
         conn.commit()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         # 設定統一圖文選單
         switch_rich_menu(user_id, MAIN_RICH_MENU_ID)
@@ -591,9 +596,7 @@ def handle_postback(event):
     
     print(f">>> 收到來自 {user_id} 的 Postback: {data}")
     
-    if is_duplicate_action(user_id, data):
-        print(f">>> 重複操作已忽略: {data}")
-        return
+    # 重複檢查已停用
     
     try:
         # 直接章節選擇（數字 1-7）
@@ -666,13 +669,23 @@ def handle_start_reading(user_id, reply_token, line_api):
             start_section_id = content_sections[0]['section_id'] if content_sections else 1
         
         # 更新使用者進度
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         conn.execute(
             "UPDATE users SET current_chapter_id = 1, current_section_id = ? WHERE line_user_id = ?", 
             (start_section_id, user_id)
         )
         conn.commit()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         print(f">>> 使用者 {user_id} 開始閱讀第一章，起始段落: {start_section_id}")
         
@@ -762,13 +775,23 @@ def handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_a
             start_section_id = content_sections[0]['section_id'] if content_sections else 1
         
         # 更新使用者當前章節和段落
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         conn.execute(
             "UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?", 
             (chapter_number, start_section_id, user_id)
         )
         conn.commit()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         print(f">>> 使用者 {user_id} 選擇第 {chapter_number} 章，起始段落: {start_section_id}")
         
@@ -787,12 +810,22 @@ def handle_direct_chapter_selection(user_id, chapter_number, reply_token, line_a
 def handle_resume_reading(user_id, reply_token, line_api):
     """上次進度：跳到上次位置"""
     try:
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         user = conn.execute(
             "SELECT current_chapter_id, current_section_id FROM users WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         if user and user['current_chapter_id']:
             chapter_id = user['current_chapter_id']
@@ -813,12 +846,22 @@ def handle_resume_reading(user_id, reply_token, line_api):
 def handle_chapter_quiz(user_id, reply_token, line_api):
     """本章測驗題：需要先進入章節才能使用"""
     try:
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         user = conn.execute(
             "SELECT current_chapter_id FROM users WHERE line_user_id = ?", 
             (user_id,)
         ).fetchone()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         if not user or not user['current_chapter_id']:
             line_api.reply_message(
@@ -851,8 +894,13 @@ def handle_chapter_quiz(user_id, reply_token, line_api):
 def handle_progress_inquiry(user_id, reply_token, line_api):
     """處理進度查詢"""
     try:
+        try:
         conn = get_db_connection()
-        
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         total_sections = sum(len(ch['sections']) for ch in book_data['chapters'])
         
         # 取得當前進度
@@ -892,7 +940,11 @@ def handle_progress_inquiry(user_id, reply_token, line_api):
             (user_id,)
         ).fetchone()[0]
         
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         progress_text = "📊 學習進度報告\n\n"
         if user and user['current_chapter_id']:
@@ -917,8 +969,13 @@ def handle_progress_inquiry(user_id, reply_token, line_api):
 def handle_error_analytics(user_id, reply_token, line_api):
     """錯誤分析：顯示答錯統計，錯誤多的排前面"""
     try:
+        try:
         conn = get_db_connection()
-        
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         # 計算總體統計
         total_attempts = conn.execute(
             "SELECT COUNT(*) FROM quiz_attempts WHERE line_user_id = ?", 
@@ -932,6 +989,10 @@ def handle_error_analytics(user_id, reply_token, line_api):
                     messages=[TextMessage(text="尚未有測驗記錄\n\n完成測驗後可以查看詳細的錯誤分析" + check_new_user_guidance(user_id))]
                 )
             )
+            except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
             conn.close()
             return
         
@@ -958,7 +1019,11 @@ def handle_error_analytics(user_id, reply_token, line_api):
             (user_id,)
         ).fetchall()
         
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         # 建立分析報告
         analysis_text = f"📊 錯誤分析報告\n\n"
@@ -1028,7 +1093,13 @@ def handle_error_analytics(user_id, reply_token, line_api):
 def handle_bookmarks(user_id, reply_token, line_api):
     """我的書籤：查看標記內容"""
     try:
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         bookmarks = conn.execute(
             """SELECT chapter_id, section_id
                FROM bookmarks
@@ -1036,7 +1107,11 @@ def handle_bookmarks(user_id, reply_token, line_api):
                ORDER BY chapter_id, section_id""", 
             (user_id,)
         ).fetchall()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         if not bookmarks:
             line_api.reply_message(
@@ -1098,7 +1173,13 @@ def handle_add_bookmark(params, user_id, reply_token, line_api):
         chapter_id = int(params.get('chapter_id', [1])[0])
         section_id = int(params.get('section_id', [1])[0])
         
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         existing = conn.execute(
             "SELECT id FROM bookmarks WHERE line_user_id = ? AND chapter_id = ? AND section_id = ?",
             (user_id, chapter_id, section_id)
@@ -1120,7 +1201,11 @@ def handle_add_bookmark(params, user_id, reply_token, line_api):
             else:
                 text = f"✅ 已加入書籤\n\n第 {chapter_id} 章第 {section_id} 段"
             
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         line_api.reply_message(
             ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
         )
@@ -1143,12 +1228,22 @@ def handle_answer(params, user_id, reply_token, line_api):
             is_correct = user_answer == correct
             
             # 記錄答題
-            conn = get_db_connection()
+            try:
+        conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
             conn.execute(
                 "INSERT INTO quiz_attempts (line_user_id, chapter_id, section_id, user_answer, is_correct) VALUES (?, ?, ?, ?, ?)",
                 (user_id, chapter_id, section_id, user_answer, is_correct)
             )
             conn.commit()
+            except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
             conn.close()
             
             # 建立結果訊息
@@ -1210,13 +1305,23 @@ def handle_navigation(user_id, chapter_id, section_id, reply_token, line_api):
     """處理內容導覽 - 修正圖片段落邏輯"""
     try:
         # 更新使用者進度
+        try:
         conn = get_db_connection()
+    except Exception as e:
+        print(f">>> 資料庫連接失敗: {e}")
+        return
+    
+    try:
         conn.execute(
             "UPDATE users SET current_chapter_id = ?, current_section_id = ? WHERE line_user_id = ?",
             (chapter_id, section_id, user_id)
         )
         conn.commit()
-        conn.close()
+        except Exception as e:
+        print(f">>> 資料庫操作錯誤: {e}")
+    finally:
+        if conn:
+            conn.close()
         
         # 找章節
         chapter = next((c for c in book_data['chapters'] if c['chapter_id'] == chapter_id), None)
