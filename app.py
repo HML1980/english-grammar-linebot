@@ -36,13 +36,7 @@ def return_db_connection(conn):
 def init_database():
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
-        # 強制重建表格
-        tables = ['user_actions', 'quiz_attempts', 'bookmarks', 'users']
-        for table in tables:
-            cur.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
-        
-        cur.execute('''
+        cur = conn.cursor()cur.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 line_user_id TEXT UNIQUE NOT NULL,
