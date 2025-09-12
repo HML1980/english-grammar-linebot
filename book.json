@@ -4,7 +4,7 @@
       "chapter_id": 1,
       "title": "CH 1 常見錯誤",
       "image_url": "https://raw.githubusercontent.com/HML1980/english-grammar-linebot/main/images/ch1.png",
-      "sections": [
+      "sections":[
   {
     "section_id": 1,
     "type": "content",
@@ -365,7 +365,7 @@
       "answer": "C"
     }
   }
-]
+      ]
     },
     {
       "chapter_id": 2,
@@ -802,7 +802,7 @@
       "answer": "D"
     }
   }
-]
+      ]
     },
     {
       "chapter_id": 3,
@@ -1174,13 +1174,13 @@
       "answer": "D"
     }
   }
-]
+      ]
     },
     {
       "chapter_id": 4,
       "title": "CH 4 動詞",
       "image_url": "https://raw.githubusercontent.com/HML1980/english-grammar-linebot/main/images/ch4.png",
-      "sections": [
+      "sections":[
   {
     "section_id": 1,
     "type": "content",
@@ -1531,7 +1531,7 @@
       "answer": "C"
     }
   }
-]
+      ]
     },
     {
       "chapter_id": 5,
@@ -1783,7 +1783,7 @@
       "answer": "C"
     }
   }
-]
+      ]
     },
     {
       "chapter_id": 6,
@@ -2085,7 +2085,7 @@
       "answer": "C"
     }
   }
-]
+      ]
     },
     {
       "chapter_id": 7,
@@ -2342,7 +2342,7 @@
       "answer": "C"
     }
   }
-]
+      ]
     }
   ]
 }
